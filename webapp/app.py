@@ -721,12 +721,34 @@ elif page == "🔄 回测":
         with col4:
             run_btn = st.button("▶ 运行回测", type="primary", use_container_width=True)
 
+        # 时间范围
+        info = info_for(target)
+        df_raw = get_data_notify(info["symbol"], info["market"], info["name"])
+        if df_raw is not None and not df_raw.empty:
+            d_min = df_raw["Date"].min().date()
+            d_max = df_raw["Date"].max().date()
+            col_s, col_e = st.columns(2)
+            with col_s:
+                start_date = st.date_input("开始日", d_min,
+                                           min_value=d_min, max_value=d_max, key="bt_start")
+            with col_e:
+                end_date = st.date_input("结束日", d_max,
+                                         min_value=d_min, max_value=d_max, key="bt_end")
+        else:
+            start_date = end_date = None
+
         if not run_btn:
             st.info("选择参数后点击「运行回测」")
             st.stop()
 
-        info = info_for(target)
-        df = get_data_notify(info["symbol"], info["market"], info["name"])
+        # 按时间范围过滤数据
+        df = df_raw
+        if start_date and end_date:
+            df = df_raw[(df_raw["Date"] >= pd.Timestamp(start_date)) &
+                        (df_raw["Date"] <= pd.Timestamp(end_date))]
+            if df.empty:
+                st.error("选定时间范围内无数据")
+                st.stop()
 
         strat = strategy_map[strategy_name]
 
