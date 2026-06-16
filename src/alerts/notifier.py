@@ -43,24 +43,19 @@ def log_to_file(msg: str):
 
 
 def desktop_notify(title: str, message: str):
-    """多通道通知: macOS通知 + 声音 + 终端闪烁"""
-    # 1. macOS 通知 (如果系统允许)
+    """macOS 弹窗通知 + 终端响铃"""
     try:
-        subprocess.run(
+        # display dialog: 可靠的文字弹窗
+        subprocess.Popen(
             ["osascript", "-e",
-             f'display notification "{message}" with title "StockPredict" subtitle "{title}"'],
-            capture_output=True, timeout=5)
+             f'display dialog "{message}" with title "StockPredict — {title}" '
+             f'buttons {{"知道了"}} default button 1 giving up after 10'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
-    # 2. 终端响铃
+    # 终端响铃
     try:
         print("\a", end="", flush=True)
-    except Exception:
-        pass
-    # 3. 语音播报 (后台, 不阻塞)
-    try:
-        subprocess.Popen(["say", f"{title}: {message}"],
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
