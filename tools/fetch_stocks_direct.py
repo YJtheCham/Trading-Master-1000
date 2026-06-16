@@ -12,7 +12,10 @@ from src.utils.config import DATA_DIR
 
 def fetch_eastmoney(market_filter: str, label: str):
     """东方财富 API 通用拉取"""
-    import urllib.request
+    import urllib.request, ssl
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
     url = (
         f"https://push2.eastmoney.com/api/qt/clist/get"
         f"?pn=1&pz=10000&po=1&np=1&fltt=2&fid=f3"
@@ -23,7 +26,7 @@ def fetch_eastmoney(market_filter: str, label: str):
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
         "Referer": "https://quote.eastmoney.com/",
     })
-    with urllib.request.urlopen(req, timeout=30) as resp:
+    with urllib.request.urlopen(req, timeout=30, context=ctx) as resp:
         data = json.loads(resp.read().decode())
     items = data.get("data", {}).get("diff", [])
     total = data.get("data", {}).get("total", 0)
