@@ -62,3 +62,12 @@ def get_llm_config() -> dict:
         "base_url": cfg.get("llm_base_url", "https://api.deepseek.com/v1"),
         "model": cfg.get("llm_model", "deepseek-chat"),
     }
+
+
+def get_telegram_config() -> dict:
+    """Telegram Bot 配置"""
+    import os
+    cfg = load_config()
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "") or cfg.get("telegram_token", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "") or cfg.get("telegram_chat_id", "")
+    return {"token": token, "chat_id": chat_id}

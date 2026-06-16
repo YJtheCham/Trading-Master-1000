@@ -368,6 +368,21 @@ with st.sidebar:
             st.toast("LLM Key 已保存", icon="🤖")
             st.rerun()
 
+    with st.expander("📱 Telegram 推送", expanded=False):
+        from src.utils.config import get_telegram_config
+        tg = get_telegram_config()
+        if tg["token"] and tg["chat_id"]:
+            st.caption("✅ Telegram 已配置")
+        t1 = st.text_input("Bot Token", value=tg["token"] or "",
+                           placeholder="123456:ABC...", type="password",
+                           key="tg_tok", label_visibility="collapsed")
+        t2 = st.text_input("Chat ID", value=tg["chat_id"] or "",
+                           placeholder="-100xxx", key="tg_cid",
+                           label_visibility="collapsed")
+        if st.button("💾 保存 Telegram", use_container_width=True):
+            cfg = load_config(); cfg["telegram_token"] = t1; cfg["telegram_chat_id"] = t2
+            save_config(cfg); st.rerun()
+
     st.divider()
     st.caption(f"自选股 {len(st.session_state.watchlist)} 只")
 

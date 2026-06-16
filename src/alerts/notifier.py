@@ -23,6 +23,8 @@ def notify(event: AlertEvent, method: str = "all"):
         desktop_notify(event.rule.symbol, event.message)
     if method in ("terminal", "all"):
         terminal_alert(msg)
+    if method in ("telegram", "all"):
+        telegram_notify(f"StockPredict: {event.rule.symbol}", event.message, event.action)
 
 
 def _format(event: AlertEvent) -> str:
@@ -66,3 +68,24 @@ def terminal_alert(msg: str):
     print(f"\033[91m⚠️  交易提醒\033[0m", file=sys.stderr)
     print(msg, file=sys.stderr)
     print(f"\033[93m{'='*60}\033[0m\n", file=sys.stderr)
+
+
+def telegram_notify(title: str, message: str, action: str = ""):
+    """通过 Telegram Bot 发手机推送"""
+    from src.utils.config import get_telegram_config
+    cfg = get_telegram_config()
+    if not cfg["token"] or not cfg["chat_id"]:
+        return
+    text = f"📈 *{title}*\n{message}"
+    if action:
+        text += f"\n\n💡 操作建议: {action}"
+    try:
+        import requests
+        url = f"https://api.telegram.org/bot{cfg['token']}/sendMessage"
+        requests.post(url, json={
+            "chat_id": cfg["chat_id"],
+            "text": text,
+            "parse_mode": "Markdown",
+        }, timeout=5)
+    except Exception:
+        pass
