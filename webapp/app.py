@@ -68,7 +68,16 @@ dark_css = base_css + """
     .stExpander { background:#161b22; border-color:#30363d; }
 """
 
-st.markdown(f"<style>{dark_css if st.session_state.dark_mode else light_css}</style>", unsafe_allow_html=True)
+mobile_css = """
+    @media (max-width: 768px) {
+        div[data-testid=\"stHorizontalBlock\"] { flex-wrap:wrap !important; }
+        div[data-testid=\"stHorizontalBlock\"] > div { min-width:100% !important; flex:1 1 100% !important; }
+        div[data-testid=\"stSegmentedControl\"] button { font-size:0.7rem; padding:0.2rem 0.1rem; }
+        .stMetric { padding:4px 6px; }
+    }
+"""
+
+st.markdown(f"<style>{dark_css if st.session_state.dark_mode else light_css}{mobile_css}</style>", unsafe_allow_html=True)
 
 # ─── 会话状态 ─────────────────────────────────────────────
 if "source_status" not in st.session_state:
@@ -161,19 +170,28 @@ if "stock_names" not in st.session_state:
     for k in st.session_state.watchlist:
         info = PRESET_STOCKS.get(k, {"name": k})
         st.session_state.stock_names[k] = info["name"]
-    # 从持久化文件恢复名字
     from src.data.fetcher import load_watchlist
     for item in load_watchlist():
         if item.name:
             key = f"{item.market}-{item.symbol}"
             st.session_state.stock_names[key] = item.name
 
+if "stock_groups" not in st.session_state:
+    st.session_state.stock_groups = {}
+    from src.data.fetcher import load_watchlist
+    for item in load_watchlist():
+        key = f"{item.market}-{item.symbol}"
+        st.session_state.stock_groups[key] = item.group or "默认"
+
+if "active_group" not in st.session_state:
+    st.session_state.active_group = "全部"
+
 
 # ─── 自选管理工具 ─────────────────────────────────────────
 def _watchlist_key(info: dict) -> str:
     return f"{info['market']}-{info['symbol']}"
 
-def _add_to_watchlist(symbol: str, market: str, name: str = ""):
+def _add_to_watchlist(symbol: str, market: str, name: str = "", group: str = "默认"):
     key = f"{market}-{symbol}"
     if key not in st.session_state.watchlist:
         st.session_state.watchlist.add(key)
@@ -181,6 +199,7 @@ def _add_to_watchlist(symbol: str, market: str, name: str = ""):
             from src.data.stock_db import resolve_stock_name
             name = resolve_stock_name(symbol, market) or symbol
         st.session_state.stock_names[key] = name
+        st.session_state.stock_groups[key] = group
         _persist_watchlist()
         st.toast(f"✅ 已添加 {market}:{symbol} {name}", icon="📋")
         return True
@@ -189,10 +208,10 @@ def _add_to_watchlist(symbol: str, market: str, name: str = ""):
 def _remove_from_watchlist(key: str):
     st.session_state.watchlist.discard(key)
     st.session_state.stock_names.pop(key, None)
+    st.session_state.stock_groups.pop(key, None)
     _persist_watchlist()
 
 def _persist_watchlist():
-    """将 session_state 的 watchlist 写回持久化文件"""
     from src.data.fetcher import save_watchlist
     from src.utils.config import StockItem
     items = []
@@ -201,7 +220,8 @@ def _persist_watchlist():
         if len(parts) == 2:
             m, s = parts
             n = st.session_state.stock_names.get(key, s)
-            items.append(StockItem(symbol=s, market=m, name=n))
+            g = st.session_state.stock_groups.get(key, "默认")
+            items.append(StockItem(symbol=s, market=m, name=n, group=g))
     save_watchlist(items)
 
 # ─── Sidebar ───────────────────────────────────────────────
@@ -241,15 +261,18 @@ with st.sidebar:
         results = search_stocks(search_q, limit=10)
         if results:
             for code, name, market in results:
-                label = f"[{market}] {code} {name}"
+                label = f"[{market}] {code} {name}" if name else f"[{market}] {code}"
                 key = f"{market}-{code}"
                 already = key in st.session_state.watchlist
                 btn_label = "✅" if already else "➕"
-                if st.button(f"{btn_label} {label}", key=f"add_{key}",
-                             use_container_width=True,
-                             disabled=already):
-                    _add_to_watchlist(code, market, name)
-                    st.rerun()
+                if not already:
+                    with st.expander(f"添加 {label}") if True else st.empty():
+                        gp = st.selectbox("分组", sorted(set(st.session_state.stock_groups.values()) | {"默认"}), key=f"gp_{key}")
+                        if st.button(f"确认添加", key=f"add_{key}", use_container_width=True):
+                            _add_to_watchlist(code, market, name, gp)
+                            st.rerun()
+                else:
+                    st.button(f"{btn_label} {label}", key=f"add_{key}", disabled=True, use_container_width=True)
         else:
             # 逐一尝试三个市场, 第一个找到就停
             found = False
@@ -299,6 +322,15 @@ with st.sidebar:
             Path(tmp_path).unlink(missing_ok=True)
 
     st.divider()
+    # 分组过滤
+    all_groups = sorted(set(st.session_state.stock_groups.values()) | {"全部"})
+    active = st.selectbox("📂 分组", all_groups,
+                           index=all_groups.index(st.session_state.active_group) if st.session_state.active_group in all_groups else 0,
+                           key="grp_select")
+    if active != st.session_state.active_group:
+        st.session_state.active_group = active
+        st.rerun()
+
     st.subheader(f"📋 自选列表 ({len(st.session_state.watchlist)})")
 
     if st.session_state.watchlist:
@@ -431,6 +463,14 @@ if page == "🏠 仪表盘":
         st.stop()
 
     watchlist_sorted = sorted(st.session_state.watchlist)
+    # 按分组过滤
+    ag = st.session_state.active_group
+    if ag != "全部":
+        watchlist_sorted = [k for k in watchlist_sorted
+                            if st.session_state.stock_groups.get(k, "默认") == ag]
+    if not watchlist_sorted:
+        st.info(f"分组「{ag}」中暂无股票")
+        st.stop()
     COLS_PER_ROW = 4
     for i in range(0, len(watchlist_sorted), COLS_PER_ROW):
         row_stocks = watchlist_sorted[i:i + COLS_PER_ROW]

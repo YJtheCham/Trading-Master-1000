@@ -19,6 +19,7 @@ class StockItem(BaseModel):
     market: str
     name: str = ""
     active: bool = True
+    group: str = "默认"
 
 
 # ─── Token / 配置管理 ────────────────────────────────────
