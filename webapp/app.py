@@ -378,7 +378,7 @@ with st.sidebar:
 # ═══════════════════════════════════════════════════════════
 #  顶部导航
 # ═══════════════════════════════════════════════════════════
-PAGES = ["🏠 仪表盘", "📡 预测", "🔄 回测", "🛡️ 风控", "🔔 交易监控", "🧠 策略推荐", "ℹ️ 自选详情"]
+PAGES = ["🏠 仪表盘", "📡 预测", "🔄 回测", "🛡️ 风控", "🔔 交易监控", "🔍 选股器", "💰 模拟交易", "🧠 策略推荐", "ℹ️ 自选详情"]
 
 if "page" not in st.session_state:
     st.session_state.page = PAGES[0]
@@ -1074,6 +1074,155 @@ elif page == "🔔 交易监控":
     with col3:
         st.button("⏹ 停止", use_container_width=True, disabled=not running,
                   on_click=engine.stop)
+
+# ═══════════════════════════════════════════════════════════
+#  🔍 选股器
+# ═══════════════════════════════════════════════════════════
+elif page == "🔍 选股器":
+    st.title("🔍 条件选股器")
+    st.caption("用技术条件扫描自选股, 筛选符合条件的股票")
+
+    from src.recommend.screener import screen_market
+    from src.alerts.models import CONDITION_TYPES as CT, AlertRule
+    from src.data.stock_db import get_db
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        condition = st.selectbox("条件", list(CT.keys()),
+                                 format_func=lambda x: CT[x], key="scr_cond")
+    with col2:
+        market = st.selectbox("市场", ["A", "HK", "US"], key="scr_mkt")
+    with col3:
+        limit = st.slider("最多结果", 5, 50, 20, key="scr_limit")
+
+    params = {}
+    if condition in ("above_ma", "below_ma"):
+        params["window"] = st.number_input("MA窗口", 5, 120, 20, key="sp_w")
+    elif condition in ("golden_cross", "death_cross", "ma_cross_combo"):
+        params["short"] = st.number_input("短期MA", 5, 50, 20, key="sp_s")
+        params["long"] = st.number_input("长期MA", 10, 200, 60, key="sp_l")
+    elif condition in ("rsi_oversold", "rsi_overbought", "rsi_combo"):
+        params["window"] = st.number_input("RSI窗口", 5, 30, 14, key="sp_w2")
+        params["level"] = st.number_input("阈值", 10, 90, 30, key="sp_lv")
+    elif condition in ("bollinger_upper", "bollinger_lower", "bollinger_combo"):
+        params["window"] = st.number_input("窗口", 10, 50, 20, key="sp_bw")
+        params["std"] = st.number_input("标准差", 1, 4, 2, key="sp_bs")
+    elif condition == "volume_spike" or condition == "volume_breakout":
+        params["ratio"] = st.number_input("倍数", 1.5, 5.0, 2.0, key="sp_vr")
+    elif condition in ("above_price", "below_price"):
+        params["threshold"] = st.number_input("价格阈值", 0.0, 10000.0, 100.0, key="sp_pt")
+
+    if st.button("🔍 开始扫描", type="primary", use_container_width=True, key="scr_scan"):
+        with st.spinner("扫描中..."):
+            scan_list = [key.split("-", 1)[1] for key in st.session_state.watchlist
+                        if key.startswith(market + "-")]
+            if not scan_list:
+                scan_list = None
+            hits = screen_market(condition, params, market, scan_list, limit)
+
+        if hits:
+            st.success(f"找到 {len(hits)} 只符合条件的股票")
+            cols = st.columns(3)
+            for i, h in enumerate(hits):
+                with cols[i % 3]:
+                    st.metric(f"{h.direction} {h.symbol} {h.name}",
+                              f"{h.current_price:.2f}", h.message[:30])
+                    key = f"{h.market}-{h.symbol}"
+                    if key not in st.session_state.watchlist:
+                        if st.button(f"➕ 加到自选", key=f"scr_add_{h.symbol}",
+                                     use_container_width=True):
+                            _add_to_watchlist(h.symbol, h.market, h.name)
+                            st.rerun()
+        else:
+            st.warning("未找到符合条件的股票")
+
+# ═══════════════════════════════════════════════════════════
+#  💰 模拟交易
+# ═══════════════════════════════════════════════════════════
+elif page == "💰 模拟交易":
+    st.title("💰 模拟交易")
+
+    if "paper_account" not in st.session_state:
+        st.session_state.paper_account = {"cash": 100000.0, "positions": {}}
+        st.session_state.paper_history = []
+
+    acc = st.session_state.paper_account
+    hist = st.session_state.paper_history
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("现金", f"{acc['cash']:.2f}")
+    pos_value = sum(float(v.get("shares", 0)) * float(v.get("price", 0))
+                    for v in acc["positions"].values())
+    c2.metric("持仓市值", f"{pos_value:.2f}")
+    c3.metric("总资产", f"{acc['cash'] + pos_value:.2f}")
+
+    st.divider()
+    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+    with col1:
+        keys = st.session_state.watchlist or list(PRESET_STOCKS.keys())
+        sym = st.selectbox("股票", keys,
+                           format_func=lambda x: info_for(x)["name"],
+                           key="paper_sym")
+    with col2:
+        action = st.selectbox("操作", ["买入", "卖出"], key="paper_act")
+    with col3:
+        shares = st.number_input("数量(股)", 1, 100000, 100, key="paper_sh")
+    with col4:
+        if st.button("✅ 执行", type="primary", use_container_width=True):
+            info = info_for(sym)
+            df = get_data_for(info["symbol"], info["market"], info["name"])
+            price = float(df["Close"].iloc[-1])
+            key = sym
+            if action == "买入":
+                cost = price * shares * 1.0003
+                if cost <= acc["cash"]:
+                    acc["cash"] -= cost
+                    pos = acc["positions"].get(key, {"shares": 0, "price": 0, "name": info["name"]})
+                    old_val = pos["shares"] * pos["price"]
+                    pos["shares"] += shares
+                    pos["price"] = (old_val + price * shares) / pos["shares"]
+                    pos["name"] = info["name"]
+                    acc["positions"][key] = pos
+                    hist.append(f"📅 买入 {info['name']} {shares}股 @{price:.2f}")
+                    st.success(f"买入 {info['name']} {shares}股 @{price:.2f}")
+                else:
+                    st.error("资金不足")
+            else:
+                pos = acc["positions"].get(key)
+                if pos and pos["shares"] >= shares:
+                    profit = price * shares * 0.9997
+                    pnl = (price - pos["price"]) * shares
+                    acc["cash"] += profit
+                    pos["shares"] -= shares
+                    if pos["shares"] == 0:
+                        del acc["positions"][key]
+                    else:
+                        acc["positions"][key] = pos
+                    hist.append(f"📅 卖出 {info['name']} {shares}股 @{price:.2f} 盈亏{pnl:+.2f}")
+                    st.success(f"卖出 {info['name']} {shares}股 @{price:.2f} 盈亏{pnl:+.2f}")
+                else:
+                    st.error("持仓不足")
+            st.rerun()
+
+    if acc["positions"]:
+        st.divider()
+        st.subheader("📋 当前持仓")
+        pos_rows = []
+        for key, pos in acc["positions"].items():
+            info = info_for(key)
+            df = get_data_for(info["symbol"], info["market"], info["name"])
+            cur_price = float(df["Close"].iloc[-1])
+            pnl = (cur_price - pos["price"]) * pos["shares"]
+            pos_rows.append({"股票": pos["name"], "成本价": f"{pos['price']:.2f}",
+                             "现价": f"{cur_price:.2f}", "股数": pos["shares"],
+                             "盈亏": f"{pnl:+.2f}",
+                             "收益率": f"{(cur_price/pos['price']-1)*100:+.1f}%"})
+        st.dataframe(pd.DataFrame(pos_rows), use_container_width=True, hide_index=True)
+
+    if hist:
+        with st.expander("📜 交易记录"):
+            for h in reversed(hist[-20:]):
+                st.write(h)
 
 # ═══════════════════════════════════════════════════════════
 #  🧠 策略推荐
