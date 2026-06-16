@@ -556,82 +556,77 @@ elif page == "📡 预测":
 
         if not models_sel:
             st.info("请选择模型后点击「开始预测」")
-            st.stop()
-
-        if not run_btn:
-            st.info("点击「▶ 开始预测」运行")
-            st.stop()
-
-        info = info_for(target)
-        df = get_data_notify(info["symbol"], info["market"], info["name"])
-
-        with st.spinner("训练模型中..."):
-            results = run_models(df, model_names=models_sel, steps=steps)
-
-        # 保存到历史 (每个模型一条)
-        from src.data.pred_history import add_prediction
-        for name, r in results.items():
-            if len(r.forecast) == 0:
-                continue
-            mape_val = r.metrics.get("MAPE", 0)
-            if isinstance(mape_val, str):
-                mape_val = 0
-            add_prediction(info["symbol"], info["market"], info["name"],
-                           name, r.forecast, r.forecast_dates,
-                           float(r.history[-1]), float(mape_val))
-
-        st.divider()
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=df["Date"], y=df["Close"],
-                                 name="历史收盘价",
-                                 line=dict(color="black", width=1.5)))
-        colors = {"arima": "#E74C3C", "gbdt": "#2ECC71",
-                  "xgboost": "#F39C12", "lstm": "#9B59B6", "transformer": "#1ABC9C"}
-        for name, r in results.items():
-            if len(r.forecast) == 0:
-                continue
-            fig.add_trace(go.Scatter(x=r.forecast_dates, y=r.forecast,
-                                     name=f"{name} 预测",
-                                     line=dict(color=colors.get(name, "purple"),
-                                               dash="dash", width=2)))
-        fig.update_layout(height=500, hovermode="x unified",
-                          title=f"{info['name']} 多模型预测对比 (未来{steps}天)")
-        st.plotly_chart(fig, use_container_width=True)
-
-        st.subheader("模型评估对比")
-        rows = []
-        for name, r in results.items():
-            m = r.metrics
-            if "error" in m:
-                rows.append({"模型": name, "状态": "❌", "MAE": "-", "RMSE": "-", "MAPE": "-"})
-                continue
-            direction = "📈 涨" if r.forecast[-1] > r.history[-1] else "📉 跌"
-            rows.append({"模型": name, "MAE": m.get("MAE", "-"), "RMSE": m.get("RMSE", "-"),
-                         "MAPE(%)": m.get("MAPE", "-"), "方向": direction,
-                         "当前价": f"{r.history[-1]:.2f}", "预测末价": f"{r.forecast[-1]:.2f}"})
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-
-        st.subheader("📅 逐日预测结果")
-        day_df = pd.DataFrame()
-        for name, r in results.items():
-            if len(r.forecast) == 0:
-                continue
-            day_df[name] = r.forecast
-            day_df[name] = day_df[name].round(2)
-        if not day_df.empty:
-            day_df.insert(0, "天数", [f"第{i+1}天" for i in range(len(day_df))])
-            st.dataframe(day_df, use_container_width=True, hide_index=True)
-
-        with st.expander("📊 风控指标"):
-            risk = calc_all_risk_metrics(df)
-            cols = st.columns(5)
-            for col, (k, v) in zip(cols, risk.items()):
-                    col.metric(k, fmt_risk(k, v))
-
-
-    # ══════════════════════════════════════════════════════
-    #  历史记录
-    # ══════════════════════════════════════════════════════
+        elif run_btn:
+            info = info_for(target)
+            df = get_data_notify(info["symbol"], info["market"], info["name"])
+    
+            with st.spinner("训练模型中..."):
+                results = run_models(df, model_names=models_sel, steps=steps)
+    
+            # 保存到历史 (每个模型一条)
+            from src.data.pred_history import add_prediction
+            for name, r in results.items():
+                if len(r.forecast) == 0:
+                    continue
+                mape_val = r.metrics.get("MAPE", 0)
+                if isinstance(mape_val, str):
+                    mape_val = 0
+                add_prediction(info["symbol"], info["market"], info["name"],
+                               name, r.forecast, r.forecast_dates,
+                               float(r.history[-1]), float(mape_val))
+    
+            st.divider()
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=df["Date"], y=df["Close"],
+                                     name="历史收盘价",
+                                     line=dict(color="black", width=1.5)))
+            colors = {"arima": "#E74C3C", "gbdt": "#2ECC71",
+                      "xgboost": "#F39C12", "lstm": "#9B59B6", "transformer": "#1ABC9C"}
+            for name, r in results.items():
+                if len(r.forecast) == 0:
+                    continue
+                fig.add_trace(go.Scatter(x=r.forecast_dates, y=r.forecast,
+                                         name=f"{name} 预测",
+                                         line=dict(color=colors.get(name, "purple"),
+                                                   dash="dash", width=2)))
+            fig.update_layout(height=500, hovermode="x unified",
+                              title=f"{info['name']} 多模型预测对比 (未来{steps}天)")
+            st.plotly_chart(fig, use_container_width=True)
+    
+            st.subheader("模型评估对比")
+            rows = []
+            for name, r in results.items():
+                m = r.metrics
+                if "error" in m:
+                    rows.append({"模型": name, "状态": "❌", "MAE": "-", "RMSE": "-", "MAPE": "-"})
+                    continue
+                direction = "📈 涨" if r.forecast[-1] > r.history[-1] else "📉 跌"
+                rows.append({"模型": name, "MAE": m.get("MAE", "-"), "RMSE": m.get("RMSE", "-"),
+                             "MAPE(%)": m.get("MAPE", "-"), "方向": direction,
+                             "当前价": f"{r.history[-1]:.2f}", "预测末价": f"{r.forecast[-1]:.2f}"})
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    
+            st.subheader("📅 逐日预测结果")
+            day_df = pd.DataFrame()
+            for name, r in results.items():
+                if len(r.forecast) == 0:
+                    continue
+                day_df[name] = r.forecast
+                day_df[name] = day_df[name].round(2)
+            if not day_df.empty:
+                day_df.insert(0, "天数", [f"第{i+1}天" for i in range(len(day_df))])
+                st.dataframe(day_df, use_container_width=True, hide_index=True)
+    
+            with st.expander("📊 风控指标"):
+                risk = calc_all_risk_metrics(df)
+                cols = st.columns(5)
+                for col, (k, v) in zip(cols, risk.items()):
+                        col.metric(k, fmt_risk(k, v))
+    
+    
+        # ══════════════════════════════════════════════════════
+        #  历史记录
+        # ══════════════════════════════════════════════════════
     with tab_hist:
         from src.data.pred_history import load_history, PredictionRecord
 
@@ -755,10 +750,9 @@ elif page == "🔄 回测":
 
         if not run_btn:
             st.info("选择参数后点击「运行回测」")
-            st.stop()
-
-        # 按时间范围过滤数据
-        df = df_raw
+        else:
+            # 按时间范围过滤数据
+            df = df_raw
         if start_date and end_date:
             df = df_raw[(df_raw["Date"] >= pd.Timestamp(start_date)) &
                         (df_raw["Date"] <= pd.Timestamp(end_date))]
