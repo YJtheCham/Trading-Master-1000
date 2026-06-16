@@ -31,61 +31,44 @@ from src.data.sources import MockSource
 
 st.set_page_config(page_title="StockPredict", layout="wide", page_icon="📈")
 
-# ─── 全局 CSS ─────────────────────────────────────────────
-st.markdown("""
-<style>
-    /* 导航栏风格 */
-    div[data-testid="stHorizontalBlock"] > div.st-key-nav_seg > div {
-        margin-bottom: -1rem;
-    }
-    /* 卡片式容器 */
-    div.stMetric {
-        background: #f8f9fa;
-        border-radius: 8px;
-        padding: 8px 12px;
-        border: 1px solid #e9ecef;
-    }
-    /* 侧边栏缩进 */
-    section[data-testid="stSidebar"] .stButton button {
-        justify-content: flex-start;
-        text-align: left;
-        font-size: 0.85rem;
-    }
-    /* 标题区 */
-    .main-title {
-        font-size: 1.5rem; font-weight: 600; margin-bottom: 0;
-    }
-    .main-subtitle {
-        color: #6c757d; font-size: 0.85rem; margin-top: -0.3rem;
-    }
-    /* 分隔线更淡 */
-    hr {
-        margin: 0.8rem 0; border-color: #e9ecef;
-    }
-    /* 导航栏全宽 */
-    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stSegmentedControl"]) {
-        width: 100%;
-    }
-    div[data-testid="stSegmentedControl"] {
-        width: 100% !important;
-    }
-    div[data-testid="stSegmentedControl"] > div {
-        width: 100% !important;
-        display: flex;
-    }
-    div[data-testid="stSegmentedControl"] button {
-        flex: 1;
-        font-size: 0.85rem;
-        padding: 0.3rem 0.2rem;
-        white-space: nowrap;
-    }
-    div[data-testid="stSegmentedControl"] button[aria-selected="true"] {
-        font-weight: 600;
-        background: #e8f0fe;
-        border-color: #1f77b4;
-    }
-</style>
-""", unsafe_allow_html=True)
+if "dark_mode" not in st.session_state:
+    st.session_state.dark_mode = False
+
+base_css = """
+    .stButton>button { border-radius:6px; }
+    .main-title { font-size:1.5rem; font-weight:600; margin-bottom:0; }
+    .main-subtitle { font-size:0.85rem; margin-top:-0.3rem; }
+    hr { margin:0.8rem 0; }
+    div[data-testid="stHorizontalBlock"]:has(div[data-testid="stSegmentedControl"]) { width:100%; }
+    div[data-testid="stSegmentedControl"] { width:100% !important; }
+    div[data-testid="stSegmentedControl"] > div { width:100% !important; display:flex; }
+    div[data-testid="stSegmentedControl"] button { flex:1; font-size:0.85rem; white-space:nowrap; }
+    section[data-testid="stSidebar"] .stButton button { justify-content:flex-start; text-align:left; font-size:0.85rem; }
+"""
+
+light_css = base_css + """
+    .stApp { background:#fff; color:#212529; }
+    .stMetric { background:#f8f9fa; border-radius:8px; padding:8px 12px; border:1px solid #e9ecef; }
+    div[data-testid="stSegmentedControl"] button[aria-selected="true"] { font-weight:600; background:#e8f0fe; border-color:#1f77b4; }
+    hr { border-color:#e9ecef; }
+    .main-subtitle { color:#6c757d; }
+"""
+
+dark_css = base_css + """
+    .stApp, .stMain, .main { background:#0d1117 !important; color:#c9d1d9 !important; }
+    .stMetric { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:8px 12px; color:#c9d1d9; }
+    .stSidebar { background:#161b22; }
+    div[data-testid="stSegmentedControl"] button { background:#21262d; color:#c9d1d9; border-color:#30363d; }
+    div[data-testid="stSegmentedControl"] button[aria-selected="true"] { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+    hr { border-color:#30363d; }
+    .main-subtitle { color:#8b949e; }
+    .stButton>button[data-baseweb="button"] { background:#21262d; color:#c9d1d9; border-color:#30363d; }
+    .stTextInput input, .stNumberInput input, .stSelectbox div { background:#0d1117; color:#c9d1d9; border-color:#30363d; }
+    .stDataFrame { background:#161b22; }
+    .stExpander { background:#161b22; border-color:#30363d; }
+"""
+
+st.markdown(f"<style>{dark_css if st.session_state.dark_mode else light_css}</style>", unsafe_allow_html=True)
 
 # ─── 会话状态 ─────────────────────────────────────────────
 if "source_status" not in st.session_state:
@@ -225,6 +208,12 @@ def _persist_watchlist():
 with st.sidebar:
     st.markdown('<div class="main-title">📈 StockPredict</div>', unsafe_allow_html=True)
     st.markdown('<div class="main-subtitle">自选 · 预测 · 回测 · 风控</div>', unsafe_allow_html=True)
+
+    dm = st.toggle("🌙 暗色模式", st.session_state.dark_mode)
+    if dm != st.session_state.dark_mode:
+        st.session_state.dark_mode = dm
+        st.rerun()
+
     st.divider()
 
     if st.button("🔄 刷新数据源", use_container_width=True):
@@ -481,16 +470,8 @@ if page == "🏠 仪表盘":
         with tab:
             info = info_for(key)
             df = get_data_notify(info["symbol"], info["market"], info["name"])
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                                row_heights=[0.7, 0.3], vertical_spacing=0.05)
-            fig.add_trace(go.Scatter(x=df["Date"], y=df["Close"],
-                                     name="收盘价", line=dict(color="#1f77b4")),
-                          row=1, col=1)
-            fig.add_trace(go.Bar(x=df["Date"], y=df["Volume"] / 1e8,
-                                 name="成交量(亿)", marker_color="gray", opacity=0.5),
-                          row=2, col=1)
-            fig.update_layout(height=450, hovermode="x unified",
-                              title=f"{info['name']} 走势")
+            from src.data.charting import kline_chart
+            fig = kline_chart(df, title=info["name"], indicators=["ma", "macd", "rsi"], height=550)
             st.plotly_chart(fig, use_container_width=True)
 
             risk = calc_all_risk_metrics(df)
