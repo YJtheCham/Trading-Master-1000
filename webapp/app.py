@@ -265,14 +265,11 @@ with st.sidebar:
                 key = f"{market}-{code}"
                 already = key in st.session_state.watchlist
                 btn_label = "✅" if already else "➕"
-                if not already:
-                    with st.expander(f"添加 {label}") if True else st.empty():
-                        gp = st.selectbox("分组", sorted(set(st.session_state.stock_groups.values()) | {"默认"}), key=f"gp_{key}")
-                        if st.button(f"确认添加", key=f"add_{key}", use_container_width=True):
-                            _add_to_watchlist(code, market, name, gp)
-                            st.rerun()
-                else:
-                    st.button(f"{btn_label} {label}", key=f"add_{key}", disabled=True, use_container_width=True)
+                if st.button(f"{btn_label} {label}", key=f"add_{key}",
+                             use_container_width=True,
+                             disabled=already):
+                    _add_to_watchlist(code, market, name, "默认")
+                    st.rerun()
         else:
             # 逐一尝试三个市场, 第一个找到就停
             found = False
