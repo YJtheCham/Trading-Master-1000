@@ -57,9 +57,10 @@ def desktop_notify(title: str, message: str):
         print("\a", end="", flush=True)
     except Exception:
         pass
-    # 3. 语音播报 (macOS say 命令)
+    # 3. 语音播报 (后台, 不阻塞)
     try:
-        subprocess.run(["say", f"{title}: {message}"], timeout=5, capture_output=True)
+        subprocess.Popen(["say", f"{title}: {message}"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
