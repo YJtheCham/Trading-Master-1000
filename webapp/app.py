@@ -1322,165 +1322,164 @@ elif page == "🧠 策略推荐":
         # 如果没有新扫描且没有缓存结果 → 显示提示
         if not run and st.session_state.rec_result is None:
             st.info("选好股票和预测周期, 点击扫描")
-            st.stop()
-
-        # ── 执行扫描 ──
-        if run:
-            info = info_for(target)
-            df = get_data_notify(info["symbol"], info["market"], info["name"])
-            # 默认使用最近一年半数据回测
-            from datetime import datetime, timedelta
-            cutoff = pd.Timestamp(datetime.now() - timedelta(days=540))
-            df = df[df["Date"] >= cutoff]
-            if df.empty:
-                st.error("最近一年半数据不足")
-                st.stop()
-            with st.spinner("运行 5 个预测模型 + 8 个回测策略..."):
-                models = scan_predictions(df, steps=pred_steps)
-                strategies = scan_strategies(df, info["symbol"], info["market"], capital)
-                risk = calc_all_risk_metrics(df)
-                cur_price = float(df["Close"].iloc[-1])
-                report = generate_report(info["name"], info["symbol"], info["market"],
-                                          models, strategies, cur_price, risk, pred_steps)
-            # 持久化
-            valid_m = [m for m in models if not m.error]
-            up = sum(1 for m in valid_m if m.pct_change > 0) if valid_m else 0
-            avg_pct = np.mean([m.pct_change for m in valid_m]) if valid_m else 0
-            best_s = None
-            for s in strategies:
-                if not s.error and (not best_s or s.total_return > best_s.total_return):
-                    best_s = s
-            st.session_state.rec_result = {
-                "info": info, "models": models, "strategies": strategies,
-                "risk": risk, "cur_price": cur_price, "report": report,
-                "best_s": best_s, "valid_m": valid_m, "up": up, "avg_pct": avg_pct,
-                "df": df,
-            }
-            # 保存历史
-            from src.data.rec_history import add_rec_history
-            add_rec_history(info["symbol"], info["market"], info["name"],
-                            cur_price, f"{up}/{len(valid_m)} 看涨", avg_pct,
-                            best_s.strategy if best_s else "-",
-                            best_s.total_return if best_s else 0,
-                            best_s.sharpe if best_s else 0,
-                            best_s.max_dd if best_s else 0,
-                            len(models), len(strategies))
-            st.rerun()
-
-        # ── 显示结果 (从 session_state) ──
-        res = st.session_state.rec_result
-        if res is None:
-            st.stop()
-
-        info = res["info"]; models = res["models"]; strategies = res["strategies"]
-        risk = res["risk"]; report = res["report"]; best_s = res["best_s"]
-        valid_m = res["valid_m"]; up = res["up"]; avg_pct = res["avg_pct"]
-
-        # ── 预测 ──
-        st.subheader("🔮 多模型预测共识", help="各模型对未来走势的预测方向与价格")
-        cols = st.columns(3)
-        cols[0].metric("当前价", f"{res['cur_price']:.2f}")
-        if valid_m:
-            cols[1].metric("模型共识", f"{up}/{len(valid_m)} 看涨")
-            cols[2].metric("平均预测涨跌", f"{avg_pct:+.1f}%")
-        m_rows = [{"模型": m.model, "方向": m.direction,
-                   "预测末价": f"{m.final_price:.2f}" if not m.error else "-",
-                   "涨跌幅": f"{m.pct_change:+.1f}%" if not m.error else "-",
-                   "MAPE": f"{m.mape:.1f}%" if not m.error else "-"}
-                  for m in models]
-        st.dataframe(pd.DataFrame(m_rows), use_container_width=True, hide_index=True)
-
-        # ── 回测 ──
-        st.subheader("📈 策略回测对比", help="各策略在历史数据上的回测绩效")
-        s_rows = []
-        for s in strategies:
-            if s.error:
-                s_rows.append({"策略": s.strategy, "状态": "❌"})
-            else:
-                s_rows.append({"策略": s.strategy,
-                               "收益": f"{s.total_return*100:+.1f}%",
-                               "夏普": f"{s.sharpe:.2f}",
-                               "回撤": f"{s.max_dd*100:.1f}%",
-                               "胜率": f"{s.win_rate*100:.0f}%",
-                               "交易": s.total_trades})
-        st.dataframe(pd.DataFrame(s_rows), use_container_width=True, hide_index=True)
-
-        # ── 风控 ──
-        with st.expander("📊 风控指标"):
-            cols = st.columns(5)
-            for col, (k, v) in zip(cols, risk.items()):
-                col.metric(k, fmt_risk(k, v), help=RISK_TIPS.get(k, ""))
-
-        # ── 自动生成交易监控 ──
-        st.divider()
-        st.subheader("⚡ 添加到交易监控", help="一条组合策略=一条监控规则, 同时覆盖买入和卖出信号")
-
-        STRAT_TO_COND = {
-            "双均线(5/20)":  ("ma_cross_combo", {"short": 5, "long": 20}),
-            "双均线(10/30)": ("ma_cross_combo", {"short": 10, "long": 30}),
-            "双均线(20/60)": ("ma_cross_combo", {"short": 20, "long": 60}),
-            "RSI(14)":       ("rsi_combo", {"window": 14, "oversold": 30, "overbought": 70}),
-            "通道突破(20/10)":("volume_breakout", {"lookback": 20, "vol_ratio": 2.0}),
-            "布林带(20/2)":  ("bollinger_combo", {"window": 20, "std": 2}),
-        }
-
-        if best_s:
-            mapped = STRAT_TO_COND.get(best_s.strategy)
-            if mapped:
-                cond, params = mapped
-                desc = CONDITION_TYPES.get(cond, cond)
-                st.info(f"推荐策略 **{best_s.strategy}** → 组合条件 **{cond}** ({desc})")
-
-                if st.button("✅ 一键添加到交易监控", use_container_width=True, type="primary",
-                             key="rec_add_alert"):
-                    add_rule(AlertRule(
-                        symbol=info["symbol"], market=info["market"],
-                        condition=cond, params=params,
-                        label=f"推荐策略: {best_s.strategy}",
-                    ))
-                    st.session_state.rec_result = None  # 清缓存
-                    st.session_state.page = "🔔 交易监控"  # 跳转
-                    st.rerun()
-
-            else:
-                suggest_conds = [("above_ma", "上穿20日均线", {"window": 20})]
-                selected = []
-                for cond, desc, params in suggest_conds:
-                    if st.checkbox(desc, True, key=f"as_{cond}", help=CONDITION_TIPS.get(cond, "")):
-                        selected.append((cond, params))
-                if selected and st.button("✅ 添加选中条件", use_container_width=True, type="primary"):
-                    for cond, params in selected:
-                        add_rule(AlertRule(
-                            symbol=info["symbol"], market=info["market"],
-                            condition=cond, params=params,
-                            label=f"推荐: {info['name']}",
-                        ))
-                    st.session_state.rec_result = None
-                    st.session_state.page = "🔔 交易监控"
-                    st.rerun()
-
-        # ── AI ──
-        st.divider()
-        st.subheader("🤖 AI 分析 (DeepSeek)")
-        api_key = get_llm_key()
-        if not api_key:
-            st.warning("请先在侧边栏配置 DeepSeek API Key")
-            with st.expander("📋 数据报告"):
-                st.code(report)
         else:
-            with st.spinner("AI 分析中..."):
-                ai_result = analyze_with_llm(report)
-            if ai_result:
-                st.success(ai_result)
-            else:
-                st.warning("AI 调用失败, 请检查 API Key 和网络")
-            with st.expander("📋 数据报告"):
-                st.code(report)
 
-    # ══════════════════════════════════════════════════════
-    #  历史
-    # ══════════════════════════════════════════════════════
-    with tab_rec_hist:
+            # ── 执行扫描 ──
+            if run:
+                info = info_for(target)
+                df = get_data_notify(info["symbol"], info["market"], info["name"])
+                # 默认使用最近一年半数据回测
+                from datetime import datetime, timedelta
+                cutoff = pd.Timestamp(datetime.now() - timedelta(days=540))
+                df = df[df["Date"] >= cutoff]
+                if df.empty:
+                    st.error("最近一年半数据不足")
+                    st.stop()
+                with st.spinner("运行 5 个预测模型 + 8 个回测策略..."):
+                    models = scan_predictions(df, steps=pred_steps)
+                    strategies = scan_strategies(df, info["symbol"], info["market"], capital)
+                    risk = calc_all_risk_metrics(df)
+                    cur_price = float(df["Close"].iloc[-1])
+                    report = generate_report(info["name"], info["symbol"], info["market"],
+                                              models, strategies, cur_price, risk, pred_steps)
+                # 持久化
+                valid_m = [m for m in models if not m.error]
+                up = sum(1 for m in valid_m if m.pct_change > 0) if valid_m else 0
+                avg_pct = np.mean([m.pct_change for m in valid_m]) if valid_m else 0
+                best_s = None
+                for s in strategies:
+                    if not s.error and (not best_s or s.total_return > best_s.total_return):
+                        best_s = s
+                st.session_state.rec_result = {
+                    "info": info, "models": models, "strategies": strategies,
+                    "risk": risk, "cur_price": cur_price, "report": report,
+                    "best_s": best_s, "valid_m": valid_m, "up": up, "avg_pct": avg_pct,
+                    "df": df,
+                }
+                # 保存历史
+                from src.data.rec_history import add_rec_history
+                add_rec_history(info["symbol"], info["market"], info["name"],
+                                cur_price, f"{up}/{len(valid_m)} 看涨", avg_pct,
+                                best_s.strategy if best_s else "-",
+                                best_s.total_return if best_s else 0,
+                                best_s.sharpe if best_s else 0,
+                                best_s.max_dd if best_s else 0,
+                                len(models), len(strategies))
+                st.rerun()
+    
+            # ── 显示结果 (从 session_state) ──
+            res = st.session_state.rec_result
+            if res is not None:
+    
+            info = res["info"]; models = res["models"]; strategies = res["strategies"]
+                risk = res["risk"]; report = res["report"]; best_s = res["best_s"]
+                valid_m = res["valid_m"]; up = res["up"]; avg_pct = res["avg_pct"]
+        
+                # ── 预测 ──
+                st.subheader("🔮 多模型预测共识", help="各模型对未来走势的预测方向与价格")
+                cols = st.columns(3)
+                cols[0].metric("当前价", f"{res['cur_price']:.2f}")
+                if valid_m:
+                    cols[1].metric("模型共识", f"{up}/{len(valid_m)} 看涨")
+                    cols[2].metric("平均预测涨跌", f"{avg_pct:+.1f}%")
+                m_rows = [{"模型": m.model, "方向": m.direction,
+                           "预测末价": f"{m.final_price:.2f}" if not m.error else "-",
+                           "涨跌幅": f"{m.pct_change:+.1f}%" if not m.error else "-",
+                           "MAPE": f"{m.mape:.1f}%" if not m.error else "-"}
+                          for m in models]
+                st.dataframe(pd.DataFrame(m_rows), use_container_width=True, hide_index=True)
+        
+                # ── 回测 ──
+                st.subheader("📈 策略回测对比", help="各策略在历史数据上的回测绩效")
+                s_rows = []
+                for s in strategies:
+                    if s.error:
+                        s_rows.append({"策略": s.strategy, "状态": "❌"})
+                    else:
+                        s_rows.append({"策略": s.strategy,
+                                       "收益": f"{s.total_return*100:+.1f}%",
+                                       "夏普": f"{s.sharpe:.2f}",
+                                       "回撤": f"{s.max_dd*100:.1f}%",
+                                       "胜率": f"{s.win_rate*100:.0f}%",
+                                       "交易": s.total_trades})
+                st.dataframe(pd.DataFrame(s_rows), use_container_width=True, hide_index=True)
+        
+                # ── 风控 ──
+                with st.expander("📊 风控指标"):
+                    cols = st.columns(5)
+                    for col, (k, v) in zip(cols, risk.items()):
+                        col.metric(k, fmt_risk(k, v), help=RISK_TIPS.get(k, ""))
+        
+                # ── 自动生成交易监控 ──
+                st.divider()
+                st.subheader("⚡ 添加到交易监控", help="一条组合策略=一条监控规则, 同时覆盖买入和卖出信号")
+        
+                STRAT_TO_COND = {
+                    "双均线(5/20)":  ("ma_cross_combo", {"short": 5, "long": 20}),
+                    "双均线(10/30)": ("ma_cross_combo", {"short": 10, "long": 30}),
+                    "双均线(20/60)": ("ma_cross_combo", {"short": 20, "long": 60}),
+                    "RSI(14)":       ("rsi_combo", {"window": 14, "oversold": 30, "overbought": 70}),
+                    "通道突破(20/10)":("volume_breakout", {"lookback": 20, "vol_ratio": 2.0}),
+                    "布林带(20/2)":  ("bollinger_combo", {"window": 20, "std": 2}),
+                }
+        
+                if best_s:
+                    mapped = STRAT_TO_COND.get(best_s.strategy)
+                    if mapped:
+                        cond, params = mapped
+                        desc = CONDITION_TYPES.get(cond, cond)
+                        st.info(f"推荐策略 **{best_s.strategy}** → 组合条件 **{cond}** ({desc})")
+        
+                        if st.button("✅ 一键添加到交易监控", use_container_width=True, type="primary",
+                                     key="rec_add_alert"):
+                            add_rule(AlertRule(
+                                symbol=info["symbol"], market=info["market"],
+                                condition=cond, params=params,
+                                label=f"推荐策略: {best_s.strategy}",
+                            ))
+                            st.session_state.rec_result = None  # 清缓存
+                            st.session_state.page = "🔔 交易监控"  # 跳转
+                            st.rerun()
+        
+                    else:
+                        suggest_conds = [("above_ma", "上穿20日均线", {"window": 20})]
+                        selected = []
+                        for cond, desc, params in suggest_conds:
+                            if st.checkbox(desc, True, key=f"as_{cond}", help=CONDITION_TIPS.get(cond, "")):
+                                selected.append((cond, params))
+                        if selected and st.button("✅ 添加选中条件", use_container_width=True, type="primary"):
+                            for cond, params in selected:
+                                add_rule(AlertRule(
+                                    symbol=info["symbol"], market=info["market"],
+                                    condition=cond, params=params,
+                                    label=f"推荐: {info['name']}",
+                                ))
+                            st.session_state.rec_result = None
+                            st.session_state.page = "🔔 交易监控"
+                            st.rerun()
+        
+                # ── AI ──
+                st.divider()
+                st.subheader("🤖 AI 分析 (DeepSeek)")
+                api_key = get_llm_key()
+                if not api_key:
+                    st.warning("请先在侧边栏配置 DeepSeek API Key")
+                    with st.expander("📋 数据报告"):
+                        st.code(report)
+                else:
+                    with st.spinner("AI 分析中..."):
+                        ai_result = analyze_with_llm(report)
+                    if ai_result:
+                        st.success(ai_result)
+                    else:
+                        st.warning("AI 调用失败, 请检查 API Key 和网络")
+                    with st.expander("📋 数据报告"):
+                        st.code(report)
+        
+            # ══════════════════════════════════════════════════════
+            #  历史
+            # ══════════════════════════════════════════════════════
+        with tab_rec_hist:
         from src.data.rec_history import load_rec_history
 
         history = load_rec_history()
