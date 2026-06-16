@@ -168,6 +168,15 @@ class StockDatabase:
                 except Exception:
                     pass
 
+        # 尝试从直接拉取的全量文件加载
+        full_file = DATA_DIR / "a_stocks_full.json"
+        if full_file.exists():
+            try:
+                self._data["A"] = json.loads(full_file.read_text())
+                return
+            except Exception:
+                pass
+
         # 从网络加载更全的列表 (超时5秒)
         import concurrent.futures
 
