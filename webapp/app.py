@@ -723,10 +723,14 @@ elif page == "🔄 回测":
 
         # 时间范围
         info = info_for(target)
-        df_raw = get_data_notify(info["symbol"], info["market"], info["name"])
+        try:
+            df_raw = get_data_for(info["symbol"], info["market"])
+        except Exception:
+            df_raw = None
         if df_raw is not None and not df_raw.empty:
             d_min = df_raw["Date"].min().date()
             d_max = df_raw["Date"].max().date()
+            st.caption(f"数据范围: {d_min} ~ {d_max} 共{len(df_raw)}条")
             col_s, col_e = st.columns(2)
             with col_s:
                 start_date = st.date_input("开始日", d_min,
