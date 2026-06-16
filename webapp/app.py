@@ -1336,6 +1336,13 @@ elif page == "🧠 策略推荐":
         if run:
             info = info_for(target)
             df = get_data_notify(info["symbol"], info["market"], info["name"])
+            # 默认使用最近一年半数据回测
+            from datetime import datetime, timedelta
+            cutoff = pd.Timestamp(datetime.now() - timedelta(days=540))
+            df = df[df["Date"] >= cutoff]
+            if df.empty:
+                st.error("最近一年半数据不足")
+                st.stop()
             with st.spinner("运行 5 个预测模型 + 8 个回测策略..."):
                 models = scan_predictions(df, steps=pred_steps)
                 strategies = scan_strategies(df, info["symbol"], info["market"], capital)
