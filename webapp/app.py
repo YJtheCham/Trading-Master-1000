@@ -165,14 +165,26 @@ PRESET_STOCKS = {
 }
 
 if "watchlist" not in st.session_state:
-    default_keys = ["A-000001", "HK-00700", "US-AAPL"]
-    st.session_state.watchlist = set(default_keys)
+    # 从持久化文件加载自选列表
+    from src.data.fetcher import load_watchlist
+    saved = load_watchlist()
+    if saved:
+        st.session_state.watchlist = {f"{i.market}-{i.symbol}" for i in saved}
+    else:
+        st.session_state.watchlist = {"A-000001", "HK-00700", "US-AAPL"}
 
 if "stock_names" not in st.session_state:
     st.session_state.stock_names = {}
-    for k in default_keys:
-        info = PRESET_STOCKS[k]
+    for k in st.session_state.watchlist:
+        info = PRESET_STOCKS.get(k, {"name": k})
         st.session_state.stock_names[k] = info["name"]
+    # 从持久化文件恢复名字
+    from src.data.fetcher import load_watchlist
+    for item in load_watchlist():
+        if item.name:
+            key = f"{item.market}-{item.symbol}"
+            st.session_state.stock_names[key] = item.name
+
 
 # ─── 自选管理工具 ─────────────────────────────────────────
 def _watchlist_key(info: dict) -> str:
@@ -186,6 +198,7 @@ def _add_to_watchlist(symbol: str, market: str, name: str = ""):
             from src.data.stock_db import resolve_stock_name
             name = resolve_stock_name(symbol, market) or symbol
         st.session_state.stock_names[key] = name
+        _persist_watchlist()
         st.toast(f"✅ 已添加 {market}:{symbol} {name}", icon="📋")
         return True
     return False
@@ -193,6 +206,20 @@ def _add_to_watchlist(symbol: str, market: str, name: str = ""):
 def _remove_from_watchlist(key: str):
     st.session_state.watchlist.discard(key)
     st.session_state.stock_names.pop(key, None)
+    _persist_watchlist()
+
+def _persist_watchlist():
+    """将 session_state 的 watchlist 写回持久化文件"""
+    from src.data.fetcher import save_watchlist
+    from src.utils.config import StockItem
+    items = []
+    for key in st.session_state.watchlist:
+        parts = key.split("-", 1)
+        if len(parts) == 2:
+            m, s = parts
+            n = st.session_state.stock_names.get(key, s)
+            items.append(StockItem(symbol=s, market=m, name=n))
+    save_watchlist(items)
 
 # ─── Sidebar ───────────────────────────────────────────────
 with st.sidebar:
