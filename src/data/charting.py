@@ -9,10 +9,12 @@ from plotly.subplots import make_subplots
 
 def kline_chart(df: pd.DataFrame, title: str = "",
                 indicators: list[str] | None = None,
-                height: int = 600) -> go.Figure:
+                height: int = 600,
+                template: str = "plotly_white") -> go.Figure:
     """K线图 + 成交量 + 可选技术指标
 
     indicators: ["macd", "rsi", "ma", "bollinger"]
+    template: plotly template name, e.g. "plotly_dark" or "plotly_white"
     """
     if indicators is None:
         indicators = ["ma", "macd"]
@@ -108,6 +110,7 @@ def kline_chart(df: pd.DataFrame, title: str = "",
 
     fig.update_layout(
         height=height, hovermode="x unified",
+        template=template,
         xaxis_rangeslider_visible=False,
         legend=dict(orientation="h", yanchor="bottom", y=1.02),
         margin=dict(l=10, r=10, t=30, b=10),

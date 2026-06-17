@@ -55,6 +55,10 @@ if "refresh_key" not in st.session_state:
 if "selected_stock" not in st.session_state:
     st.session_state.selected_stock = None
 
+# ─── Plotly 暗色模板 ──────────────────────────────────────
+def plotly_template():
+    return "plotly_dark" if st.session_state.dark_mode else "plotly_white"
+
 # ═══════════════════════════════════════════════════════════
 #  CSS: 移动端优先 + iOS 底部 Tab 栏 + 触摸友好按钮
 # ═══════════════════════════════════════════════════════════
@@ -65,11 +69,13 @@ base_css = """
         border-radius: 10px !important;
         font-size: 0.9rem !important;
         touch-action: manipulation;
+        transition: background 0.15s, border-color 0.15s;
     }
+    /* ── 底部 Tab 栏: iOS 风格玻璃效果 ── */
     .st-key-tab_bar button {
         min-height: 50px !important;
         border-radius: 12px !important;
-        font-size: 0.8rem !important;
+        font-size: 0.78rem !important;
         display: flex !important;
         flex-direction: column !important;
         align-items: center !important;
@@ -78,6 +84,7 @@ base_css = """
         line-height: 1.2 !important;
         white-space: pre-line !important;
         padding: 6px 4px !important;
+        transition: color 0.15s;
     }
     .main-title { font-size: 1.3rem; font-weight: 700; margin-bottom: 2px; }
     .main-subtitle { font-size: 0.78rem; margin-bottom: 0.5rem; }
@@ -111,6 +118,13 @@ base_css = """
     h2 { font-size: 1.1rem !important; }
     h3 { font-size: 1rem !important; }
 
+    /* ── 统一表格圆角 ── */
+    [data-testid="stDataFrame"] { border-radius: 10px; overflow: hidden; }
+    [data-testid="stTable"] { border-radius: 10px; overflow: hidden; }
+
+    /* ── 统一 Expander ── */
+    .stExpander { border-radius: 12px; margin: 4px 0; }
+
     /* ── 移动端: 2列卡片自适应 ── */
     @media (max-width: 768px) {
         body, [data-testid="stAppViewContainer"] {
@@ -143,27 +157,33 @@ base_css = """
         }
         .js-plotly-plot { max-height: 220px !important; }
         h1 { font-size: 1.15rem !important; }
+        .st-key-tab_bar button { font-size: 0.7rem !important; padding: 4px 2px !important; min-height: 44px !important; }
     }
 """
 
 light_css = base_css + """
     .stApp { background: #f5f5f7; color: #1d1d1f; }
-    .stMetric { background: #fff; border-radius: 10px; padding: 8px 12px; border: 1px solid #e5e5ea; }
+    .stMetric { background: #fff; border-radius: 12px; padding: 8px 12px; border: 1px solid #e5e5ea; box-shadow:0 1px 3px rgba(0,0,0,0.04); }
+    .stMetric:hover { box-shadow:0 2px 8px rgba(0,0,0,0.08); }
     .st-key-tab_bar button {
-        background: #fff; color: #8e8e93; border: none !important;
-        box-shadow: none !important;
+        background: #ffffffdd; color: #8e8e93; border: 1px solid #e5e5ea !important;
+        box-shadow: 0 -1px 6px rgba(0,0,0,0.04);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     }
     .st-key-tab_bar button:hover { color: #007aff; }
     .st-key-tab_bar button[kind="primary"] {
-        color: #007aff !important; font-weight: 700 !important; background: #fff !important;
+        color: #007aff !important; font-weight: 700 !important; background: #ffffffdd !important;
     }
     hr { border-color: #e5e5ea; }
     .main-subtitle { color: #8e8e93; }
     .st-key-dash button {
         background: #fff; color: #1d1d1f; border: 1px solid #e5e5ea !important;
+        box-shadow:0 1px 3px rgba(0,0,0,0.04);
     }
     .st-key-dash button p { color: #1d1d1f; }
     .ios-tab-spacer { border-top: 1px solid #e5e5ea; }
+    [data-testid="stDataFrame"] { box-shadow:0 1px 3px rgba(0,0,0,0.04); border:1px solid #e5e5ea; }
+    .stExpander { border:1px solid #e5e5ea; }
 """
 
 dark_css = base_css + """
@@ -171,18 +191,19 @@ dark_css = base_css + """
     [data-testid="stAppViewContainer"], [data-testid="stAppViewContainer"] > div {
         background: #000 !important; color: #f5f5f7 !important;
     }
-    .stMetric { background: #1c1c1e; border: 1px solid #38383a; border-radius: 10px;
-                padding: 8px 12px; color: #f5f5f7 !important; }
+    .stMetric { background: #1c1c1e; border: 1px solid #38383a; border-radius: 12px;
+                padding: 8px 12px; color: #f5f5f7 !important; box-shadow:0 1px 3px rgba(0,0,0,0.5); }
     .stMetric label, .stMetric div, .stMetric span { color: #f5f5f7 !important; }
     .stSidebar, [data-testid="stSidebar"] { background: #1c1c1e !important; }
     .stSidebar * { color: #f5f5f7 !important; }
     .st-key-tab_bar button {
-        background: #000 !important; color: #8e8e93; border: none !important;
-        box-shadow: none !important;
+        background: #000000dd !important; color: #8e8e93; border: 1px solid #38383a !important;
+        box-shadow: 0 -1px 6px rgba(0,0,0,0.5);
+        backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
     }
     .st-key-tab_bar button:hover { color: #0a84ff; }
     .st-key-tab_bar button[kind="primary"] {
-        color: #0a84ff !important; font-weight: 700 !important; background: #000 !important;
+        color: #0a84ff !important; font-weight: 700 !important; background: #000000dd !important;
     }
     .stButton > button { background: #1c1c1e; color: #f5f5f7; border-color: #38383a; }
     .stButton > button:hover { border-color: #0a84ff; color: #fff; }
@@ -190,16 +211,23 @@ dark_css = base_css + """
         background: #1c1c1e !important; color: #f5f5f7 !important; border-color: #38383a !important;
     }
     .stDataFrame, .stDataFrame * { background: #1c1c1e !important; color: #f5f5f7 !important; }
-    .stExpander { background: #1c1c1e; border-color: #38383a; }
+    [data-testid="stDataFrame"] { box-shadow:0 1px 3px rgba(0,0,0,0.5); border:1px solid #38383a; }
+    .stExpander { background: #1c1c1e; border:1px solid #38383a; }
     .stExpander * { color: #f5f5f7 !important; }
     .stSelectbox label, .stNumberInput label { color: #f5f5f7 !important; }
     hr { border-color: #38383a; }
     .main-subtitle { color: #8e8e93; }
     .st-key-dash button {
         background: #1c1c1e; color: #f5f5f7; border: 1px solid #38383a !important;
+        box-shadow:0 1px 3px rgba(0,0,0,0.5);
     }
     .st-key-dash button p { color: #f5f5f7; }
     .ios-tab-spacer { border-top: 1px solid #38383a; }
+    /* ── Selectbox 下拉 ── */
+    [data-baseweb="popover"] { background:#1c1c1e !important; border:1px solid #38383a !important; border-radius:10px; }
+    [data-baseweb="popover"] * { color:#f5f5f7 !important; }
+    [data-baseweb="popover"] [role="option"]:hover { background:#38383a !important; }
+    [data-baseweb="popover"] [role="option"][aria-selected="true"] { background:#0a84ff33 !important; }
 """
 
 st.markdown(
@@ -578,6 +606,7 @@ elif PAGE == "预测":
                     height=300, hovermode="x unified",
                     title=f"{info['name']} — {model_name} 预测",
                     margin=dict(l=10, r=10, t=40, b=10),
+                    template=plotly_template(),
                 )
                 st.plotly_chart(fig, use_container_width=True)
 

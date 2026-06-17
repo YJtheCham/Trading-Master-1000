@@ -45,7 +45,7 @@ if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = False
 
 base_css = """
-    .stButton>button { border-radius:6px; }
+    .stButton>button { border-radius:6px; transition:border-color 0.15s,background 0.15s; }
     .main-title { font-size:1.5rem; font-weight:600; margin-bottom:0; }
     .main-subtitle { font-size:0.85rem; margin-top:-0.3rem; }
     hr { margin:0.8rem 0; }
@@ -54,25 +54,45 @@ base_css = """
     div[data-testid="stSegmentedControl"] > div { width:100% !important; display:flex; }
     div[data-testid="stSegmentedControl"] button { flex:1; font-size:0.85rem; white-space:nowrap; }
     section[data-testid="stSidebar"] .stButton button { justify-content:flex-start; text-align:left; font-size:0.85rem; }
+    /* ── 统一表格圆角/阴影 ── */
+    [data-testid="stDataFrame"] { border-radius:8px; overflow:hidden; }
+    [data-testid="stDataFrame"] > div { border-radius:8px; }
+    [data-testid="stTable"] { border-radius:8px; overflow:hidden; }
+    /* ── 统一 Expander 视觉 ── */
+    .stExpander { border-radius:10px; margin:6px 0; }
+    .stExpander > div[data-testid="stExpander"] { border-radius:10px; }
+    /* ── 统一按钮风格 ── */
+    .stButton>button[kind="primary"] { font-weight:600; }
 """
 
 light_css = base_css + """
     .stApp { background:#fff; color:#212529; }
-    .stMetric { background:#f8f9fa; border-radius:8px; padding:8px 12px; border:1px solid #e9ecef; }
+    .stMetric { background:#f8f9fa; border-radius:8px; padding:8px 12px; border:1px solid #e9ecef; box-shadow:0 1px 2px rgba(0,0,0,0.03); }
     div[data-testid="stSegmentedControl"] button[aria-selected="true"] { font-weight:600; background:#e8f0fe; border-color:#1f77b4; }
     hr { border-color:#e9ecef; }
     .main-subtitle { color:#6c757d; }
+    /* ── 仪表盘: 卡片(metric)+按钮 整合成一体 ── */
     .st-key-dash button { border-radius:12px; padding:14px 10px; font-size:0.82rem; line-height:1.4; white-space:pre-line; min-height:95px; border:1px solid #dee2e6 !important; }
     .st-key-dash button p { font-weight:700; font-size:1.25rem; color:#212529; margin:4px 0 0 0; }
     /* 卡片自动换行 */
     [data-testid="stVerticalBlockBoundary"] > [data-testid="stHorizontalBlock"] { flex-wrap:wrap; gap:8px; }
     [data-testid="stVerticalBlockBoundary"] > [data-testid="stHorizontalBlock"] > [data-testid="column"] { min-width:200px; flex:1 1 200px; }
+    /* ── 表格 ── */
+    [data-testid="stDataFrame"] { box-shadow:0 1px 3px rgba(0,0,0,0.06); border:1px solid #e9ecef; }
+    /* ── Expander ── */
+    .stExpander { border:1px solid #e9ecef; }
+    .stExpander:hover { border-color:#ced4da; }
+    /* ── Selectbox 下拉 ── */
+    [data-baseweb="popover"] [role="listbox"] { border-radius:8px; }
+    /* ── Metric 统一阴影 ── */
+    .stMetric:hover { box-shadow:0 2px 6px rgba(0,0,0,0.08); }
 """
 
 dark_css = base_css + """
     .stApp, .stApp > header, .main, .stMain, [data-testid=\"stAppViewContainer\"], [data-testid=\"stAppViewContainer\"] > div { background:#0d1117 !important; color:#c9d1d9 !important; }
-    .stMetric { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:8px 12px; color:#c9d1d9 !important; }
+    .stMetric { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:8px 12px; color:#c9d1d9 !important; box-shadow:0 1px 2px rgba(0,0,0,0.3); }
     .stMetric label, .stMetric div, .stMetric span { color:#c9d1d9 !important; }
+    .stMetric:hover { box-shadow:0 2px 6px rgba(0,0,0,0.5); }
     .stSidebar, [data-testid=\"stSidebar\"] { background:#161b22 !important; }
     .stSidebar * { color:#c9d1d9 !important; }
     div[data-testid=\"stSegmentedControl\"] button { background:#21262d; color:#c9d1d9; border-color:#30363d; }
@@ -82,14 +102,26 @@ dark_css = base_css + """
     .stButton>button { background:#21262d; color:#c9d1d9; border-color:#30363d; }
     .stButton>button:hover { border-color:#1f6feb; color:#fff; }
     .stTextInput input, .stNumberInput input, .stSelectbox [data-baseweb=\"select\"] > div { background:#0d1117 !important; color:#c9d1d9 !important; border-color:#30363d !important; }
-    .stDataFrame, .stDataFrame * { background:#161b22 !important; color:#c9d1d9 !important; }
-    .stExpander { background:#161b22; border-color:#30363d; }
+    /* ── 表格 ── */
+    [data-testid="stDataFrame"] { box-shadow:0 1px 3px rgba(0,0,0,0.4); border:1px solid #30363d; }
+    [data-testid="stDataFrame"] * { background:#161b22 !important; color:#c9d1d9 !important; }
+    /* ── Expander ── */
+    .stExpander { background:#161b22; border:1px solid #30363d; }
+    .stExpander:hover { border-color:#484f58; }
     .stExpander * { color:#c9d1d9 !important; }
+    /* ── Tabs ── */
     .stTabs [data-baseweb=\"tab-panel\"] { background:#0d1117; }
     .stTabs [data-baseweb=\"tab\"] { background:#161b22; color:#c9d1d9; }
     .stTabs [aria-selected=\"true\"] { background:#1f6feb !important; color:#fff !important; }
+    /* ── 仪表盘卡片 ── */
     .st-key-dash button { border-radius:12px; padding:14px 10px; font-size:0.82rem; line-height:1.4; white-space:pre-line; min-height:95px; background:#161b22; border:1px solid #30363d !important; color:#c9d1d9; }
     .st-key-dash button p { font-weight:700; font-size:1.25rem; color:#c9d1d9; margin:4px 0 0 0; }
+    /* ── Selectbox 下拉 ── */
+    [data-baseweb="popover"] { background:#21262d !important; border:1px solid #30363d !important; border-radius:8px; }
+    [data-baseweb="popover"] * { color:#c9d1d9 !important; }
+    [data-baseweb="popover"] [role="option"]:hover { background:#30363d !important; }
+    [data-baseweb="popover"] [role="option"][aria-selected="true"] { background:#1f6feb33 !important; }
+    /* ── Alert / Notification ── */
     .stAlert, [data-testid=\"stInfoBox\"] { background:#161b22 !important; color:#c9d1d9 !important; border-color:#30363d !important; }
     [data-testid=\"stNotification\"] { background:#161b22 !important; }
 """
@@ -161,6 +193,17 @@ mobile_css = """
 """
 
 st.markdown(f"<style>{dark_css if st.session_state.dark_mode else light_css}{mobile_css}</style>", unsafe_allow_html=True)
+
+# ─── Plotly 暗色模板 ──────────────────────────────────────
+def plotly_template():
+    """返回当前主题对应的 Plotly 模板名"""
+    return "plotly_dark" if st.session_state.dark_mode else "plotly_white"
+
+def plotly_theme_colors():
+    """返回当前主题下的线条/文字颜色"""
+    if st.session_state.dark_mode:
+        return {"line": "#c9d1d9", "grid": "#30363d", "paper": "#0d1117", "plot": "#0d1117", "font": "#c9d1d9"}
+    return {"line": "#212529", "grid": "#e9ecef", "paper": "#fff", "plot": "#fff", "font": "#212529"}
 
 # ─── 会话状态 ─────────────────────────────────────────────
 if "source_status" not in st.session_state:
@@ -652,15 +695,16 @@ if page == "🏠 仪表盘":
             prev = df.iloc[-2]
             change = (latest["Close"] - prev["Close"]) / prev["Close"] * 100
 
-            label_text = f"{'📡 ' if fresh else ''}{info['name']} ({info['market']})"
-            if ts:
-                label_text += f"  ⏱{ts}"
+            name_display = f"{'📡 ' if fresh else ''}{info['name']} ({info['market']})"
+            ts_text = f"⏱{ts}" if ts else ""
 
             with col:
-                st.metric(label_text,
+                st.metric(name_display,
                           f"{latest['Close']:.2f}", f"{change:+.2f}%",
                           delta_color="normal" if change >= 0 else "inverse")
-                if st.button("→", key=f"dash_{key}", use_container_width=True):
+                if ts_text:
+                    st.caption(ts_text)
+                if st.button("→ 详情", key=f"dash_{key}", use_container_width=True):
                     st.session_state.selected_stock = key
                     st.session_state.page = "ℹ️ 自选详情"
                     st.rerun()
@@ -673,7 +717,8 @@ if page == "🏠 仪表盘":
             info = info_for(key)
             df = get_data_notify(info["symbol"], info["market"], info["name"])
             from src.data.charting import kline_chart
-            fig = kline_chart(df, title=info["name"], indicators=["ma"], height=300)
+            fig = kline_chart(df, title=info["name"], indicators=["ma"], height=300,
+                              template=plotly_template())
             st.plotly_chart(fig, use_container_width=True)
 
             with st.expander("📊 风控 & 详细指标"):
@@ -859,7 +904,7 @@ elif page == "📡 预测":
                                 if len(r.forecast):
                                     fig.add_trace(go.Scatter(x=r.forecast_dates, y=r.forecast,
                                         name=n, line=dict(color=cs.get(n,"gray"), dash="dash", width=2)))
-                            fig.update_layout(height=400, hovermode="x unified")
+                            fig.update_layout(height=400, hovermode="x unified", template=plotly_template())
                             st.plotly_chart(fig, use_container_width=True)
                             dd = pd.DataFrame()
                             for n, r in results.items():
@@ -1106,7 +1151,8 @@ elif page == "🔄 回测":
                                  name="持仓市值", fill="tozeroy",
                                  line=dict(color="#1f77b4")), row=3, col=1)
         fig.update_layout(height=600, hovermode="x unified",
-                          title=f"{info['name']} — {strategy_name}")
+                           title=f"{info['name']} — {strategy_name}",
+                           template=plotly_template())
         st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
@@ -1186,7 +1232,8 @@ elif page == "🛡️ 风控":
         fig = go.Figure()
         fig.add_trace(go.Histogram(x=returns * 100, nbinsx=50,
                                    marker_color="#1f77b4", opacity=0.7))
-        fig.update_layout(height=300, xaxis_title="日收益率(%)", yaxis_title="频次")
+        fig.update_layout(height=300, xaxis_title="日收益率(%)", yaxis_title="频次",
+                          template=plotly_template())
         st.plotly_chart(fig, use_container_width=True)
 
     with col2:
@@ -1195,8 +1242,8 @@ elif page == "🛡️ 风控":
         dd = (prices - peak) / peak * 100
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=df["Date"], y=dd, fill="tozeroy",
-                                 line=dict(color="red"), name="回撤%"))
-        fig.update_layout(height=300, yaxis_title="回撤(%)")
+                                  line=dict(color="red"), name="回撤%"))
+        fig.update_layout(height=300, yaxis_title="回撤(%)", template=plotly_template())
         st.plotly_chart(fig, use_container_width=True)
 
         st.divider()
@@ -1213,7 +1260,7 @@ elif page == "🛡️ 风控":
                                     marker_color="#1f77b4", opacity=0.7, name="日收益率"))
         fig2.add_vline(x=var_val * 100, line_dash="dash", line_color="red",
                        annotation_text=f"VaR {var_val*100:.2f}%")
-        fig2.update_layout(height=250, xaxis_title="日收益率(%)")
+        fig2.update_layout(height=250, xaxis_title="日收益率(%)", template=plotly_template())
         st.plotly_chart(fig2, use_container_width=True)
 
     st.divider()
@@ -1221,8 +1268,8 @@ elif page == "🛡️ 风控":
     vol = pd.Series(returns).rolling(20).std() * np.sqrt(252) * 100
     fig3 = go.Figure()
     fig3.add_trace(go.Scatter(x=df["Date"][1:], y=vol.values,
-                              line=dict(color="orange"), name="年化波动率%"))
-    fig3.update_layout(height=300, yaxis_title="波动率(%)")
+                               line=dict(color="orange"), name="年化波动率%"))
+    fig3.update_layout(height=300, yaxis_title="波动率(%)", template=plotly_template())
     st.plotly_chart(fig3, use_container_width=True)
 
 # ═══════════════════════════════════════════════════════════
@@ -1956,7 +2003,7 @@ elif page == "ℹ️ 自选详情":
         for col, (k, v) in zip(cols, perf.items()):
             col.metric(k, v)
         from src.data.charting import kline_chart
-        fig = kline_chart(df, indicators=["ma", "macd"], height=350)
+        fig = kline_chart(df, indicators=["ma", "macd"], height=350, template=plotly_template())
         st.plotly_chart(fig, use_container_width=True)
 
     # ═══ 最新消息 ═══
