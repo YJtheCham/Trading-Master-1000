@@ -521,6 +521,16 @@ with st.sidebar:
         if st.button("💾 保存", key="sck_save", use_container_width=True):
             cfg = load_config(); cfg["serverchan_key"] = sk; save_config(cfg); st.rerun()
 
+    with st.expander("💬 微信推送 (PushPlus)", expanded=False):
+        from src.utils.config import get_pushplus_token
+        ppt = get_pushplus_token()
+        if ppt: st.caption("✅ 已配置 (去 pushplus.plus 获取 Token)")
+        pt = st.text_input("Token", value=ppt or "",
+                           placeholder="xxxxx...", type="password",
+                           key="ppt_key", label_visibility="collapsed")
+        if st.button("💾 保存", key="ppt_save", use_container_width=True):
+            cfg = load_config(); cfg["pushplus_token"] = pt; save_config(cfg); st.rerun()
+
     st.divider()
     st.caption(f"自选股 {len(st.session_state.watchlist)} 只")
 
@@ -620,7 +630,18 @@ if page == "🏠 仪表盘":
         for col, key in zip(cols, row_stocks):
             info = info_for(key)
             # 直读缓存, 不走 st.cache_data (每个卡片独立刷新)
-            from src.data.fetcher import fetch_data
+            from src.data.fetcher import fetch_data, _cache_path
+
+            # 先查缓存新鲜度, 再拉数据 (避免 fetch_data 更新缓存后永远是📡)
+            cp = _cache_path(info["symbol"], info["market"])
+            fresh = True
+            ts = ""
+            if Path(cp).exists():
+                age_min = (datetime.now() - datetime.fromtimestamp(Path(cp).stat().st_mtime)).total_seconds() / 60
+                fresh = age_min < 3  # 3分钟内算新鲜
+                if not fresh:
+                    ts = datetime.fromtimestamp(Path(cp).stat().st_mtime).strftime("%m-%d %H:%M")
+
             try:
                 df = fetch_data(info["symbol"], info["market"], use_cache=True, max_age_minutes=5)
             except Exception:
@@ -631,18 +652,6 @@ if page == "🏠 仪表盘":
             prev = df.iloc[-2]
             change = (latest["Close"] - prev["Close"]) / prev["Close"] * 100
 
-            # 数据新鲜度: 查缓存文件修改时间
-            from src.data.fetcher import _cache_path
-            from datetime import datetime
-            cp = _cache_path(info["symbol"], info["market"])
-            fresh = True
-            ts = ""
-            if Path(cp).exists():
-                age_min = (datetime.now() - datetime.fromtimestamp(Path(cp).stat().st_mtime)).total_seconds() / 60
-                fresh = age_min < 3  # 3分钟内算新鲜
-                if not fresh:
-                    ts = datetime.fromtimestamp(Path(cp).stat().st_mtime).strftime("%m-%d %H:%M")
-            delta_color = "normal" if change >= 0 else "inverse"
             label_text = f"{'📡 ' if fresh else ''}{info['name']} ({info['market']})"
             if ts:
                 label_text += f"  ⏱{ts}"
@@ -650,7 +659,7 @@ if page == "🏠 仪表盘":
             with col:
                 st.metric(label_text,
                           f"{latest['Close']:.2f}", f"{change:+.2f}%",
-                          delta_color="normal")
+                          delta_color="normal" if change >= 0 else "inverse")
                 if st.button("→", key=f"dash_{key}", use_container_width=True):
                     st.session_state.selected_stock = key
                     st.session_state.page = "ℹ️ 自选详情"

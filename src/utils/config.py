@@ -81,3 +81,12 @@ def get_serverchan_key() -> str:
     if key:
         return key
     return load_config().get("serverchan_key", "")
+
+
+def get_pushplus_token() -> str:
+    """PushPlus Token (微信推送备选)"""
+    import os
+    token = os.environ.get("PUSHPLUS_TOKEN", "")
+    if token:
+        return token
+    return load_config().get("pushplus_token", "")

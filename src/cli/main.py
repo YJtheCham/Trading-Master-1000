@@ -359,6 +359,17 @@ def config_set_sck(sendkey: str):
     console.print("获取 SendKey: https://sct.ftqq.com")
 
 
+@config.command(name="set-pushplus-token")
+@click.argument("token")
+def config_set_pp(token: str):
+    """设置 PushPlus Token (微信推送备选)"""
+    cfg = load_config()
+    cfg["pushplus_token"] = token
+    save_config(cfg)
+    console.print(f"[green]PushPlus Token 已保存[/green]")
+    console.print("获取 Token: http://www.pushplus.plus")
+
+
 @cli.command()
 @click.argument("symbol")
 @click.argument("market", type=click.Choice(["A", "HK", "US"]))

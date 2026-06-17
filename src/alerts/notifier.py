@@ -27,6 +27,8 @@ def notify(event: AlertEvent, method: str = "all"):
         telegram_notify(f"StockPredict: {event.rule.symbol}", event.message, event.action)
     if method in ("wechat", "all"):
         wechat_notify(f"{event.rule.symbol} {event.rule.market}", event.message, event.action)
+    if method in ("pushplus", "all"):
+        pushplus_notify(f"{event.rule.symbol} {event.rule.market}", event.message, event.action)
 
 
 def _format(event: AlertEvent) -> str:
@@ -86,6 +88,27 @@ def wechat_notify(title: str, message: str, action: str = ""):
         requests.post(f"https://sctapi.ftqq.com/{key}.send", data={
             "title": f"StockPredict: {title}",
             "desp": text,
+        }, timeout=5)
+    except Exception:
+        pass
+
+
+def pushplus_notify(title: str, message: str, action: str = ""):
+    """通过 PushPlus 推送微信消息 (Server酱备选)"""
+    from src.utils.config import get_pushplus_token
+    token = get_pushplus_token()
+    if not token:
+        return
+    content = f"{message}"
+    if action:
+        content += f"\n操作建议: {action}"
+    try:
+        import requests
+        requests.post("https://www.pushplus.plus/send", json={
+            "token": token,
+            "title": f"StockPredict: {title}",
+            "content": content,
+            "template": "html",
         }, timeout=5)
     except Exception:
         pass
