@@ -64,6 +64,9 @@ light_css = base_css + """
     .main-subtitle { color:#6c757d; }
     .st-key-dash button { border-radius:12px; padding:14px 10px; font-size:0.82rem; line-height:1.4; white-space:pre-line; min-height:95px; border:1px solid #dee2e6 !important; }
     .st-key-dash button p { font-weight:700; font-size:1.25rem; color:#212529; margin:4px 0 0 0; }
+    /* 卡片自动换行 */
+    [data-testid="stVerticalBlockBoundary"] > [data-testid="stHorizontalBlock"] { flex-wrap:wrap; gap:8px; }
+    [data-testid="stVerticalBlockBoundary"] > [data-testid="stHorizontalBlock"] > [data-testid="column"] { min-width:200px; flex:1 1 200px; }
 """
 
 dark_css = base_css + """
@@ -93,14 +96,22 @@ dark_css = base_css + """
 
 mobile_css = """
     @media (max-width: 768px) {
-        div[data-testid=\"stHorizontalBlock\"] { flex-wrap:wrap !important; }
-        div[data-testid=\"stHorizontalBlock\"] > div { min-width:100% !important; flex:1 1 100% !important; }
-        div[data-testid=\"stSegmentedControl\"] button { font-size:0.65rem; padding:0.2rem 0.1rem; }
-        .stMetric { padding:4px 6px; }
-        section[data-testid=\"stSidebar\"] { width:100% !important; }
+        /* 侧边栏收窄 */
+        section[data-testid="stSidebar"] { width:100% !important; padding:8px; }
+        section[data-testid="stSidebar"] .stButton button { width:100%; }
+        /* 导航标签缩小 */
+        div[data-testid="stSegmentedControl"] button { font-size:0.6rem; padding:0.15rem 0.05rem; }
+        /* 卡片收窄 */
+        [data-testid="stHorizontalBlock"] > [data-testid="column"] { min-width:140px !important; flex:1 1 140px !important; }
+        .stMetric { padding:4px 6px; font-size:0.75rem; }
+        /* 主区域padding缩小 */
+        .stMain { padding:0.5rem !important; }
+        /* 图表缩小 */
+        .js-plotly-plot { max-height:250px; }
     }
     @media (max-width: 480px) {
-        .stMetric { font-size:0.75rem; }
+        [data-testid="stHorizontalBlock"] > [data-testid="column"] { min-width:45% !important; flex:1 1 45% !important; }
+        div[data-testid="stSegmentedControl"] button { font-size:0.5rem; padding:0.1rem 0.02rem; }
     }
 """
 
