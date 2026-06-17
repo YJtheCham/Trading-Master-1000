@@ -323,6 +323,63 @@ def check_ma_triple(prices, volumes, high, low, params):
     return False, "", ""
 
 
+# ─── GTJA 191 Alpha 因子 ─────────────────────────────────
+def check_alpha120(prices, volumes, high, low, params):
+    """Alpha120: (close-VWAP)/(close+VWAP) 排名比率"""
+    if volumes is None or len(prices) < 20:
+        return False, "", ""
+    vwap = np.cumsum(prices[-20:] * volumes[-20:]) / np.cumsum(volumes[-20:])
+    score = (prices[-1] - vwap[-1]) / (prices[-1] + vwap[-1] + 1e-8)
+    threshold = params.get("threshold", 0.02)
+    if score > threshold:
+        return (True, f"Alpha120={score:.4f} (> {threshold}), 收盘价显著高于VWAP", "日内强势, 关注突破")
+    if score < -threshold:
+        return (True, f"Alpha120={score:.4f} (< {-threshold}), 收盘价显著低于VWAP", "日内弱势, 可能回调")
+    return False, "", ""
+
+
+def check_alpha006(prices, volumes, high, low, params):
+    """Alpha006: -correlation(open_price_volume_ratio, volume, 10)"""
+    if volumes is None or len(prices) < 15:
+        return False, "", ""
+    op = high[-10:] if hasattr(high, '__len__') else prices[-10:]
+    vol = volumes[-10:]
+    ratio = op / (np.maximum(vol, 1))
+    corr = np.corrcoef(ratio, vol)[0, 1] if len(ratio) > 1 else 0
+    score = -corr if not np.isnan(corr) else 0
+    threshold = params.get("threshold", 0.3)
+    if score > threshold:
+        return (True, f"Alpha006={score:.3f} (> {threshold}), 量价负相关", "关注反转信号")
+    return False, "", ""
+
+
+def check_alpha053(prices, volumes, high, low, params):
+    """Alpha053: close / close[10]"""
+    if len(prices) < 15:
+        return False, "", ""
+    ratio = prices[-1] / (prices[-11] + 1e-8)
+    threshold_up = params.get("threshold_up", 1.05)
+    threshold_dn = params.get("threshold_dn", 0.95)
+    if ratio > threshold_up:
+        return (True, f"Alpha053={ratio:.3f} (> {threshold_up}), 10日涨幅显著", "趋势走强")
+    if ratio < threshold_dn:
+        return (True, f"Alpha053={ratio:.3f} (< {threshold_dn}), 10日跌幅显著", "趋势走弱")
+    return False, "", ""
+
+
+def check_alpha009(prices, volumes, high, low, params):
+    """Alpha009: SMA(delta(close,1), 5) < 0"""
+    if len(prices) < 8:
+        return False, "", ""
+    delta = np.diff(prices[-8:])
+    sma5 = np.mean(delta[-5:])
+    if sma5 < 0:
+        return (True, f"Alpha009={sma5:.3f} (< 0), 5日均价动能下行", "短期弱势, 注意风险")
+    if sma5 > 0.05:
+        return (True, f"Alpha009={sma5:.3f} (> 0.05), 5日均价动能上行", "短期强势, 关注突破")
+    return False, "", ""
+
+
 _checkers = {
     "above_ma": check_above_ma, "below_ma": check_below_ma,
     "above_price": check_above_price, "below_price": check_below_price,
@@ -333,6 +390,8 @@ _checkers = {
     "ma_cross_combo": check_ma_cross_combo, "rsi_combo": check_rsi_combo,
     "bollinger_combo": check_bollinger_combo, "ma_rsi_combo": check_ma_rsi_combo,
     "volume_breakout": check_volume_breakout, "ma_triple": check_ma_triple,
+    "alpha120": check_alpha120, "alpha006": check_alpha006,
+    "alpha053": check_alpha053, "alpha009": check_alpha009,
 }
 
 # ─── 通知预览 ─────────────────────────────────────────────
@@ -355,6 +414,10 @@ NOTIFICATION_PREVIEWS = {
     "ma_rsi_combo":   ("MA+RSI联动信号", "趋势确认后入场"),
     "volume_breakout":("放量突破信号", "放量创新高, 建议关注"),
     "ma_triple":      ("三均线排列信号", "多头持仓 / 空头减仓"),
+    "alpha120":       ("Alpha120 VWAP偏离信号", "盘价偏离加权均价"),
+    "alpha006":       ("Alpha006 量价负相关信号", "关注反转"),
+    "alpha053":       ("Alpha053 10日比率信号", "趋势强弱判断"),
+    "alpha009":       ("Alpha009 5日动能信号", "短期方向判断"),
 }
 
 

@@ -560,8 +560,8 @@ with st.sidebar:
         if ppt: st.caption("✅ 已配置")
         pk = st.text_input("Token", value=ppt or "",
                            placeholder="从 pushplus.plus 获取",
-                           type="password", key="ppt_tok", label_visibility="collapsed")
-        if st.button("💾 保存", key="ppt_save", use_container_width=True):
+                           type="password",                            key="ppt_tok", label_visibility="collapsed")
+        if st.button("💾 保存", key="pushplus_save_btn", use_container_width=True):
             cfg = load_config(); cfg["pushplus_token"] = pk; save_config(cfg); st.rerun()
 
     with st.expander("💬 微信推送 (PushPlus)", expanded=False):
@@ -1952,13 +1952,31 @@ elif page == "ℹ️ 自选详情":
         v = wd.get(key, "")
         return v if v else default
 
+    def _fmt(v, unit="auto"):
+        """格式化大数字: 1.55e+12 → 1.55万亿"""
+        if not v or v == "-":
+            return "-"
+        try:
+            n = float(v)
+        except (ValueError, TypeError):
+            return str(v)
+        if unit == "vol":
+            if n >= 1e8: return f"{n/1e8:.2f}亿"
+            if n >= 1e4: return f"{n/1e4:.0f}万"
+            return f"{n:.0f}"
+        if unit == "cap":
+            if n >= 1e12: return f"{n/1e12:.2f}万亿"
+            if n >= 1e8: return f"{n/1e8:.2f}亿"
+            return f"{n:.0f}"
+        return str(v)
+
     # ═══ 交易数据 ═══
     st.subheader("📊 交易数据")
     col1, col2, col3, col4 = st.columns(4)
     with col1: st.metric("最新价", _w("price"))
-    with col2: st.metric("涨跌幅", f"{_w('change_pct')}%")
+    with col2: st.metric("涨跌幅", f"{_w('change_pct')}%" if wd.get("change_pct") else "-")
     with col3: st.metric("涨跌额", _w("change_amt"))
-    with col4: st.metric("换手率", f"{_w('turnover')}%")
+    with col4: st.metric("换手率", f"{_w('turnover')}%" if wd.get("turnover") else "-")
 
     col1, col2, col3, col4 = st.columns(4)
     with col1: st.metric("开盘", _w("open"))
@@ -1967,8 +1985,8 @@ elif page == "ℹ️ 自选详情":
     with col4: st.metric("昨收", _w("pre_close"))
 
     col1, col2, col3, col4 = st.columns(4)
-    with col1: st.metric("成交量", _w("volume"))
-    with col2: st.metric("成交额", _w("amount"))
+    with col1: st.metric("成交量", _fmt(_w("volume"), "vol"))
+    with col2: st.metric("成交额", _fmt(_w("amount"), "vol"))
     with col3: st.metric("52周最高", _w("high_52w"))
     with col4: st.metric("52周最低", _w("low_52w"))
 
@@ -1976,20 +1994,20 @@ elif page == "ℹ️ 自选详情":
     st.divider()
     st.subheader("💰 基本面")
     col1, col2, col3, col4 = st.columns(4)
-    with col1: st.metric("总市值", _w("market_cap"))
+    with col1: st.metric("总市值", _fmt(_w("market_cap"), "cap"))
     with col2: st.metric("市盈率(TTM)", _w("pe_ttm"))
     with col3: st.metric("市盈率(LYR)", _w("pe_lyr"))
     with col4: st.metric("市净率", _w("pb"))
 
     col1, col2, col3, col4 = st.columns(4)
     with col1: st.metric("股息率", f"{_w('dividend_yield')}%" if wd.get("dividend_yield") else "-")
-    with col2: st.metric("ROE", _w("roe"))
-    with col3: st.metric("毛利率", _w("gross_margin"))
-    with col4: st.metric("资产负债率", _w("debt_ratio"))
+    with col2: st.metric("ROE", f"{_w('roe')}%" if wd.get("roe") else "-")
+    with col3: st.metric("毛利率", f"{_w('gross_margin')}%" if wd.get("gross_margin") else "-")
+    with col4: st.metric("资产负债率", f"{_w('debt_ratio')}%" if wd.get("debt_ratio") else "-")
 
     col1, col2, col3, col4 = st.columns(4)
-    with col1: st.metric("营业收入", _w("revenue"))
-    with col2: st.metric("净利润", _w("net_profit"))
+    with col1: st.metric("营业收入", _fmt(_w("revenue"), "cap"))
+    with col2: st.metric("净利润", _fmt(_w("net_profit"), "cap"))
     with col3: st.metric("行业", _w("industry"))
     with col4: st.metric("市场", market)
 

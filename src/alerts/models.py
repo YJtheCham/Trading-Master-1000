@@ -24,6 +24,11 @@ CONDITION_TYPES = {
     "ma_rsi_combo":     "MA+RSI组合 (趋势+超买超卖联动)",
     "volume_breakout":  "放量突破 (放量+创20日新高)",
     "ma_triple":        "三均线组合 (多头排列/空头排列)",
+    # GTJA 191 Alpha 因子
+    "alpha120":        "Alpha120 (收盘价-VWAP偏离度)",
+    "alpha006":        "Alpha006 (开量与10日量相关性反值)",
+    "alpha053":        "Alpha053 (10日收盘价比率)",
+    "alpha009":        "Alpha009 (5日均价下移)",
 }
 
 
