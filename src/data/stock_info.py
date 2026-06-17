@@ -27,26 +27,47 @@ def get_stock_info(symbol: str, market: str) -> dict:
 
 
 def _fill_a_info(symbol: str, info: dict):
-    import akshare as ak
-    # 实时行情 (含行业)
-    df = ak.stock_zh_a_spot_em()
-    row = df[df["代码"] == symbol]
-    if row.empty:
-        return
-    r = row.iloc[0]
-    info["name"] = str(r.get("名称", ""))
-    info["sector"] = str(r.get("行业", ""))
-    info["market_cap"] = _fmt_val(r.get("总市值", ""))
-    info["pe"] = str(r.get("市盈率-动态", ""))
-    info["volume"] = _fmt_val(r.get("成交量", ""))
-    info["high"] = str(r.get("最高", ""))
-    info["low"] = str(r.get("最低", ""))
-    info["open"] = str(r.get("开盘", ""))
-    info["pre_close"] = str(r.get("昨收", ""))
-    info["amount"] = _fmt_val(r.get("成交额", ""))
-    info["amplitude"] = str(r.get("振幅", ""))
-    info["change_pct"] = str(r.get("涨跌幅", ""))
-    info["change_amount"] = str(r.get("涨跌额", ""))
+    # 1) Wind MCP (最优先, 实时+基本面)
+    try:
+        from src.data.wind_source import a_stock_to_windcode, get_price_indicators, get_basic_info
+        indexes = "中文简称,最新成交价,涨跌幅,成交量,市盈率(TTM),总市值,今日最高价,今日最低价,今日开盘价,前收盘价"
+        wc = a_stock_to_windcode(symbol)
+        pi = get_price_indicators(wc, indexes)
+        if pi:
+            info["name"] = pi.get("中文简称", "")
+            info["pe"] = pi.get("市盈率(TTM)", "")
+            mc = pi.get("总市值2") or pi.get("总市值", "")  # Wind 返回 "总市值2"
+            info["market_cap"] = _fmt_val(mc)
+            info["high"] = pi.get("今日最高价", "")
+            info["low"] = pi.get("今日最低价", "")
+            info["open"] = pi.get("今日开盘价", "")
+            info["pre_close"] = pi.get("前收盘价", "")
+            info["change_pct"] = pi.get("涨跌幅", "")
+            info["volume"] = _fmt_val(pi.get("成交量", ""))
+        bi = get_basic_info(wc)
+        if bi:
+            industry = bi.get("所属WIND行业明细", "") or bi.get("行业分类", "")
+            info["industry"] = industry
+            info["sector"] = industry
+    except Exception:
+        pass
+
+    # 2) 本地库兜底名称
+    try:
+        import yfinance as yf
+        suffix = ".SS" if symbol.startswith(("6", "9")) else ".SZ"
+        t = yf.Ticker(symbol + suffix)
+        q = t.fast_info
+        sec = q.get("sector") or ""
+        ind = q.get("industry") or ""
+        if sec: info["sector"] = str(sec)
+        if ind: info["industry"] = str(ind)
+        mc = q.get("marketCap") or 0
+        if mc: info["market_cap"] = _fmt_val(mc)
+        pe = q.get("trailingPE") or 0
+        if pe: info["pe"] = str(round(pe, 2))
+    except Exception:
+        pass
 
 
 def _fill_us_info(symbol: str, info: dict):
@@ -74,21 +95,25 @@ def _fill_us_info(symbol: str, info: dict):
 
 
 def _fill_hk_info(symbol: str, info: dict):
-    import akshare as ak
-    df = ak.stock_hk_spot_em()
-    row = df[df["代码"] == symbol]
-    if row.empty:
-        return
-    r = row.iloc[0]
-    info["name"] = str(r.get("名称", ""))
-    info["sector"] = str(r.get("行业", ""))
-    info["market_cap"] = _fmt_val(r.get("总市值", ""))
-    info["pe"] = str(r.get("市盈率", ""))
-    info["volume"] = _fmt_val(r.get("成交量", ""))
-    info["high"] = str(r.get("最高", ""))
-    info["low"] = str(r.get("最低", ""))
-    info["open"] = str(r.get("开盘", ""))
-    info["change_pct"] = str(r.get("涨跌幅", ""))
+    # yfinance (海外可用)
+    try:
+        import yfinance as yf
+        sym = symbol.lstrip("0") + ".HK"
+        t = yf.Ticker(sym)
+        q = t.fast_info
+        info["name"] = str(q.get("shortName") or q.get("longName") or "")
+        info["sector"] = str(q.get("sector") or "")
+        info["industry"] = str(q.get("industry") or "")
+        mc = q.get("marketCap") or 0
+        info["market_cap"] = _fmt_val(mc)
+        info["pe"] = str(round(q.get("trailingPE") or 0, 2))
+    except Exception:
+        pass
+
+    # 本地股票库兜底
+    if not info.get("name"):
+        from src.data.stock_db import get_stock_name
+        info["name"] = get_stock_name(symbol, "HK") or symbol
 
 
 def _fmt_val(val) -> str:

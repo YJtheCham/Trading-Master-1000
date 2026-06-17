@@ -1,5 +1,5 @@
 """
-策略推荐历史: JSON 文件
+策略推荐历史: JSON 文件 (保存完整扫描结果)
 """
 import json
 from dataclasses import dataclass, field
@@ -27,6 +27,9 @@ class RecHistory:
     total_models: int
     total_strats: int
     predicted_at: str
+    report: str = ""                      # 完整报告
+    models_data: list = field(default_factory=list)   # 各模型结果
+    strategies_data: list = field(default_factory=list)
 
 
 def load_rec_history() -> list[RecHistory]:
@@ -47,7 +50,9 @@ def save_rec_history(records: list[RecHistory]):
 def add_rec_history(symbol: str, market: str, stock_name: str,
                     current_price: float, model_consensus: str, avg_pct: float,
                     best_strategy: str, best_ret: float, best_sharpe: float,
-                    best_maxdd: float, total_models: int, total_strats: int):
+                    best_maxdd: float, total_models: int, total_strats: int,
+                    report: str = "", models_data: list = None,
+                    strategies_data: list = None):
     record = RecHistory(
         id=f"rec_{market}_{symbol}_{datetime.now().strftime('%Y%m%d%H%M%S')}",
         symbol=symbol, market=market, stock_name=stock_name,
@@ -56,6 +61,9 @@ def add_rec_history(symbol: str, market: str, stock_name: str,
         best_ret=best_ret, best_sharpe=best_sharpe, best_maxdd=best_maxdd,
         total_models=total_models, total_strats=total_strats,
         predicted_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        report=report,
+        models_data=models_data or [],
+        strategies_data=strategies_data or [],
     )
     history = load_rec_history()
     history = [r for r in history

@@ -46,8 +46,9 @@ def _is_trading_day(market: str) -> bool:
     return datetime.now().weekday() < 5
 
 
-def _cache_fresh(cache_path: str, market: str, max_age_hours: int = 24) -> bool:
-    """判断缓存是否有效: 交易日+收盘后缓存当天有效"""
+def _cache_fresh(cache_path: str, market: str, max_age_hours: int = 24,
+                 max_age_minutes: int = None) -> bool:
+    """判断缓存是否有效"""
     path = Path(cache_path)
     if not path.exists():
         return False
@@ -55,22 +56,23 @@ def _cache_fresh(cache_path: str, market: str, max_age_hours: int = 24) -> bool:
     mtime = datetime.fromtimestamp(path.stat().st_mtime)
     now = datetime.now()
 
+    # 如果指定了最大分钟数, 直接按分钟判断
+    if max_age_minutes is not None:
+        return (now - mtime).total_seconds() < max_age_minutes * 60
+
     # 交易日: 收盘后缓存当天有效
     if _is_trading_day(market):
-        # 如果是今天收盘后的数据 → 有效
         if mtime.date() == now.date():
             return True
-        # 如果是上周五的数据, 今天周一 → 有效(周末不产生新数据)
         if (now - mtime).days <= 2:
             return True
         return False
 
-    # 非交易日: 使用最近的数据
     return (now - mtime).total_seconds() < max_age_hours * 3600
 
 
 def fetch_data(symbol: str, market: str, period_days: int = 730,
-               use_cache: bool = True) -> pd.DataFrame:
+               use_cache: bool = True, max_age_minutes: int = None) -> pd.DataFrame:
     """获取历史数据, 多源回退 + Mock兜底
 
     Args:
@@ -86,7 +88,7 @@ def fetch_data(symbol: str, market: str, period_days: int = 730,
     cache_path = _cache_path(symbol, market)
 
     # 缓存命中
-    if use_cache and _cache_fresh(cache_path, market):
+    if use_cache and _cache_fresh(cache_path, market, max_age_minutes=max_age_minutes):
         try:
             df = pd.read_parquet(cache_path)
             if not df.empty and "Close" in df.columns:
@@ -102,7 +104,6 @@ def fetch_data(symbol: str, market: str, period_days: int = 730,
         result = source.run_historical(symbol, period_days, market)
         if result.success and result.data is not None and not result.data.empty:
             df = result.data
-            # 数据清洗
             from .cleaning import clean_market_data, validate_data
             df = clean_market_data(df)
             issues = validate_data(df)
