@@ -554,15 +554,15 @@ with st.sidebar:
             cfg = load_config(); cfg["telegram_token"] = t1; cfg["telegram_chat_id"] = t2
             save_config(cfg); st.rerun()
 
-    with st.expander("💬 微信推送 (Server酱)", expanded=False):
-        from src.utils.config import get_serverchan_key
-        sck = get_serverchan_key()
-        if sck: st.caption("✅ 已配置 (去 sct.ftqq.com 获取 SendKey)")
-        sk = st.text_input("SendKey", value=sck or "",
-                           placeholder="SCTxxxxx...", type="password",
-                           key="sck_key", label_visibility="collapsed")
-        if st.button("💾 保存", key="sck_save", use_container_width=True):
-            cfg = load_config(); cfg["serverchan_key"] = sk; save_config(cfg); st.rerun()
+    with st.expander("💬 微信推送 (PushPlus)", expanded=False):
+        from src.utils.config import get_pushplus_token
+        ppt = get_pushplus_token()
+        if ppt: st.caption("✅ 已配置")
+        pk = st.text_input("Token", value=ppt or "",
+                           placeholder="从 pushplus.plus 获取",
+                           type="password", key="ppt_tok", label_visibility="collapsed")
+        if st.button("💾 保存", key="ppt_save", use_container_width=True):
+            cfg = load_config(); cfg["pushplus_token"] = pk; save_config(cfg); st.rerun()
 
     with st.expander("💬 微信推送 (PushPlus)", expanded=False):
         from src.utils.config import get_pushplus_token

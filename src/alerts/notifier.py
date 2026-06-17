@@ -75,19 +75,34 @@ def terminal_alert(msg: str):
 
 
 def wechat_notify(title: str, message: str, action: str = ""):
-    """通过 Server酱 推送微信消息 (免费, 无需公众号)"""
+    """通过 Server酱 / PushPlus 推送微信消息"""
+    # 优先 PushPlus
+    from src.utils.config import get_pushplus_token
+    token = get_pushplus_token()
+    if token:
+        text = f"## {title}\n\n{message}"
+        if action:
+            text += f"\n\n> 操作建议: {action}"
+        try:
+            import requests
+            requests.post("http://www.pushplus.plus/send", json={
+                "token": token, "title": f"StockPredict: {title}",
+                "content": text, "template": "markdown",
+            }, timeout=5)
+        except Exception:
+            pass
+        return
+
+    # 回退 Server酱
     from src.utils.config import get_serverchan_key
     key = get_serverchan_key()
-    if not key:
-        return
+    if not key: return
     text = f"{message}"
-    if action:
-        text += f"\n操作建议: {action}"
+    if action: text += f"\n操作建议: {action}"
     try:
         import requests
         requests.post(f"https://sctapi.ftqq.com/{key}.send", data={
-            "title": f"StockPredict: {title}",
-            "desp": text,
+            "title": f"StockPredict: {title}", "desp": text,
         }, timeout=5)
     except Exception:
         pass

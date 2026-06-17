@@ -78,9 +78,16 @@ def get_serverchan_key() -> str:
     """Server酱 SendKey (微信推送)"""
     import os
     key = os.environ.get("SERVERCHAN_SENDKEY", "") or os.environ.get("SCT_KEY", "")
-    if key:
-        return key
+    if key: return key
     return load_config().get("serverchan_key", "")
+
+
+def get_pushplus_token() -> str:
+    """PushPlus Token (微信推送)"""
+    import os
+    key = os.environ.get("PUSHPLUS_TOKEN", "")
+    if key: return key
+    return load_config().get("pushplus_token", "")
 
 
 def get_pushplus_token() -> str:
