@@ -1516,74 +1516,113 @@ elif page == "🔔 交易监控":
 # ═══════════════════════════════════════════════════════════
 elif page == "🔍 选股器":
     st.title("🔍 条件选股器")
-    st.caption("扫描全市场, 筛选符合技术条件的股票")
+    st.caption("组合条件, 扫描全市场")
 
     from src.recommend.screener import screen_market
     from src.alerts.models import CONDITION_TYPES as CT, AlertRule
     from src.data.stock_db import get_db
 
-    SCOPE_MAP = {
-        "自选股": "watchlist",
-        "全部A股": "all_a",
-        "创业板(300)": "gem",
-        "科创板(688)": "star",
-        "沪深主板(600/000/002)": "main_board",
-    }
+    SCOPE_MAP = {"自选股": "watchlist", "全部A股": "all_a",
+                 "创业板(300)": "gem", "科创板(688)": "star",
+                 "沪深主板": "main_board"}
 
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        condition = st.selectbox("条件", list(CT.keys()),
-                                 format_func=lambda x: CT[x], key="scr_cond")
-    with col2:
-        scope = st.selectbox("选股范围", list(SCOPE_MAP.keys()), key="scr_scope")
-    with col3:
-        limit = st.slider("最多结果", 5, 100, 30, key="scr_limit")
+    col1, col2 = st.columns([2, 1])
+    with col1: scope = st.selectbox("选股范围", list(SCOPE_MAP.keys()), key="scr_scope")
+    with col2: limit = st.slider("最多结果", 5, 100, 30, key="scr_limit")
 
-    params = {}
-    if condition in ("above_ma", "below_ma"):
-        params["window"] = st.number_input("MA窗口", 5, 120, 20, key="sp_w")
-    elif condition in ("golden_cross", "death_cross", "ma_cross_combo"):
-        params["short"] = st.number_input("短期MA", 5, 50, 20, key="sp_s")
-        params["long"] = st.number_input("长期MA", 10, 200, 60, key="sp_l")
-    elif condition in ("rsi_oversold", "rsi_overbought", "rsi_combo"):
-        params["window"] = st.number_input("RSI窗口", 5, 30, 14, key="sp_w2")
-        params["level"] = st.number_input("阈值", 10, 90, 30, key="sp_lv")
-    elif condition in ("bollinger_upper", "bollinger_lower", "bollinger_combo"):
-        params["window"] = st.number_input("窗口", 10, 50, 20, key="sp_bw")
-        params["std"] = st.number_input("标准差", 1, 4, 2, key="sp_bs")
-    elif condition == "volume_spike" or condition == "volume_breakout":
-        params["ratio"] = st.number_input("倍数", 1.5, 5.0, 2.0, key="sp_vr")
-    elif condition in ("above_price", "below_price"):
-        params["threshold"] = st.number_input("价格阈值", 0.0, 10000.0, 100.0, key="sp_pt")
-    elif condition in ("alpha120",):
-        params["threshold"] = st.number_input("偏离阈值", 0.001, 0.1, 0.02, 0.005, key="sp_a120", format="%.4f")
-    elif condition in ("alpha006",):
-        params["threshold"] = st.number_input("相关阈值", 0.1, 1.0, 0.3, 0.1, key="sp_a006")
-    elif condition in ("alpha053",):
-        params["threshold_up"] = st.number_input("上涨阈值", 1.01, 1.2, 1.05, 0.01, key="sp_a53u")
-        params["threshold_dn"] = st.number_input("下跌阈值", 0.8, 0.99, 0.95, 0.01, key="sp_a53d")
+    # 条件管理
+    if "scr_conds" not in st.session_state:
+        st.session_state.scr_conds = [{"cond": "golden_cross", "params": {"short": 20, "long": 60}, "logic": "AND"}]
+
+    for idx, cdata in enumerate(st.session_state.scr_conds):
+        cond = cdata["cond"]
+        c1, c2, c3 = st.columns([2, 2, 1])
+        with c1:
+            new_cond = st.selectbox(f"条件{idx+1}", list(CT.keys()),
+                                    index=list(CT.keys()).index(cond) if cond in CT else 0,
+                                    format_func=lambda x: CT[x], key=f"scr_c_{idx}")
+            cdata["cond"] = new_cond
+        with c2:
+            # 参数
+            if new_cond in ("above_ma", "below_ma"):
+                cdata["params"]["window"] = st.number_input("MA窗口", 5, 120, cdata["params"].get("window", 20), key=f"scp_w_{idx}")
+            elif new_cond in ("golden_cross", "death_cross", "ma_cross_combo"):
+                cdata["params"]["short"] = st.number_input("短期MA", 5, 50, cdata["params"].get("short", 20), key=f"scp_s_{idx}")
+                cdata["params"]["long"] = st.number_input("长期MA", 10, 200, cdata["params"].get("long", 60), key=f"scp_l_{idx}")
+            elif "rsi" in new_cond:
+                cdata["params"]["window"] = st.number_input("RSI窗口", 5, 30, int(cdata["params"].get("window", 14)), key=f"scp_rw_{idx}")
+                cdata["params"]["level"] = st.number_input("阈值", 10, 90, int(cdata["params"].get("level", 30)), key=f"scp_rl_{idx}")
+            elif new_cond in ("bollinger_upper", "bollinger_lower", "bollinger_combo"):
+                cdata["params"]["window"] = st.number_input("窗口", 10, 50, int(cdata["params"].get("window", 20)), key=f"scp_bw_{idx}")
+                cdata["params"]["std"] = st.number_input("标准差", 1, 4, int(cdata["params"].get("std", 2)), key=f"scp_bs_{idx}")
+            elif "volume" in new_cond:
+                cdata["params"]["ratio"] = st.number_input("倍数", 1.5, 5.0, float(cdata["params"].get("ratio", 2.0)), key=f"scp_vr_{idx}")
+            elif new_cond in ("above_price", "below_price"):
+                cdata["params"]["threshold"] = st.number_input("价格", 0.0, 10000.0, float(cdata["params"].get("threshold", 100.0)), key=f"scp_pt_{idx}")
+            elif new_cond == "alpha120":
+                cdata["params"]["threshold"] = st.number_input("偏离", 0.001, 0.1, float(cdata["params"].get("threshold", 0.02)), 0.005, format="%.4f", key=f"scp_a120_{idx}")
+            elif new_cond == "alpha006":
+                cdata["params"]["threshold"] = st.number_input("相关", 0.1, 1.0, float(cdata["params"].get("threshold", 0.3)), 0.1, key=f"scp_a006_{idx}")
+            elif new_cond == "alpha053":
+                cdata["params"]["threshold_up"] = st.number_input("涨阈值", 1.01, 1.2, float(cdata["params"].get("threshold_up", 1.05)), 0.01, key=f"scp_a53u_{idx}")
+                cdata["params"]["threshold_dn"] = st.number_input("跌阈值", 0.8, 0.99, float(cdata["params"].get("threshold_dn", 0.95)), 0.01, key=f"scp_a53d_{idx}")
+            else:
+                st.caption("无额外参数")
+        with c3:
+            if len(st.session_state.scr_conds) > 1:
+                cdata["logic"] = st.selectbox("逻辑", ["AND", "OR"], index=0 if cdata.get("logic") == "AND" else 1, key=f"scr_lg_{idx}")
+
+    cbtn1, cbtn2 = st.columns(2)
+    with cbtn1:
+        if len(st.session_state.scr_conds) < 4 and st.button("➕ 添加条件", use_container_width=True):
+            st.session_state.scr_conds.append({"cond": "above_ma", "params": {"window": 20}, "logic": "AND"})
+            st.rerun()
+    with cbtn2:
+        if len(st.session_state.scr_conds) > 1 and st.button("➖ 删除最后", use_container_width=True):
+            st.session_state.scr_conds.pop()
+            st.rerun()
 
     if st.button("🔍 开始扫描", type="primary", use_container_width=True, key="scr_scan"):
-        # 构建扫描列表
         scope_type = SCOPE_MAP[scope]
         if scope_type == "watchlist":
             scan_list = [k.split("-", 1)[1] for k in st.session_state.watchlist if k.startswith("A-")]
         else:
             db = get_db()
             all_a = [code for code, _ in db.all_stocks("A")]
-            if scope_type == "all_a":
-                scan_list = all_a[:500]  # 前500只, 防止太慢
-            elif scope_type == "gem":
-                scan_list = [c for c in all_a if c.startswith("300")]
-            elif scope_type == "star":
-                scan_list = [c for c in all_a if c.startswith("688")]
-            elif scope_type == "main_board":
-                scan_list = [c for c in all_a if c.startswith(("600", "000", "002"))]
-            else:
-                scan_list = all_a[:500]
+            if scope_type == "all_a":     scan_list = all_a[:500]
+            elif scope_type == "gem":     scan_list = [c for c in all_a if c.startswith("300")]
+            elif scope_type == "star":    scan_list = [c for c in all_a if c.startswith("688")]
+            elif scope_type == "main_board": scan_list = [c for c in all_a if c.startswith(("600","000","002"))]
+            else: scan_list = all_a[:500]
 
-        with st.spinner(f"扫描 {len(scan_list)} 只股票..."):
-            hits = screen_market(condition, params, "A", scan_list, limit)
+        # 逐个条件扫描, 然后组合
+        all_hits = {}
+        for cdata in st.session_state.scr_conds:
+            hits = screen_market(cdata["cond"], cdata["params"], "A", scan_list, limit * 5)
+            for h in hits:
+                key = f"{h.market}-{h.symbol}"
+                if key not in all_hits:
+                    all_hits[key] = {"hit": h, "conds": []}
+                all_hits[key]["conds"].append(cdata["cond"])
+
+        # 应用 AND/OR 逻辑
+        final = []
+        for key, val in all_hits.items():
+            matched = True
+            for i, cdata in enumerate(st.session_state.scr_conds):
+                if i == 0: continue  # 第一个条件已在 screen_market 中满足
+                if cdata["logic"] == "AND":
+                    if cdata["cond"] not in val["conds"]:
+                        matched = False
+                else:  # OR
+                    if cdata["cond"] in val["conds"]:
+                        matched = True
+            if matched:
+                final.append(val["hit"])
+                if len(final) >= limit:
+                    break
+
+        hits = final
 
         if hits:
             st.success(f"找到 {len(hits)} 只符合条件的股票")
