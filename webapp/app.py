@@ -31,6 +31,16 @@ from src.data.sources import MockSource
 
 st.set_page_config(page_title="StockPredict", layout="wide", page_icon="📈")
 
+# PWA / iPhone Safari 适配
+st.markdown("""
+<link rel="manifest" href="/manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="StockPredict">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<link rel="apple-touch-icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+""", unsafe_allow_html=True)
+
 if "dark_mode" not in st.session_state:
     st.session_state.dark_mode = False
 
@@ -57,27 +67,40 @@ light_css = base_css + """
 """
 
 dark_css = base_css + """
-    .stApp, .stMain, .main { background:#0d1117 !important; color:#c9d1d9 !important; }
-    .stMetric { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:8px 12px; color:#c9d1d9; }
-    .stSidebar { background:#161b22; }
-    div[data-testid="stSegmentedControl"] button { background:#21262d; color:#c9d1d9; border-color:#30363d; }
-    div[data-testid="stSegmentedControl"] button[aria-selected="true"] { background:#1f6feb; border-color:#1f6feb; color:#fff; }
+    .stApp, .stApp > header, .main, .stMain, [data-testid=\"stAppViewContainer\"], [data-testid=\"stAppViewContainer\"] > div { background:#0d1117 !important; color:#c9d1d9 !important; }
+    .stMetric { background:#161b22; border:1px solid #30363d; border-radius:8px; padding:8px 12px; color:#c9d1d9 !important; }
+    .stMetric label, .stMetric div, .stMetric span { color:#c9d1d9 !important; }
+    .stSidebar, [data-testid=\"stSidebar\"] { background:#161b22 !important; }
+    .stSidebar * { color:#c9d1d9 !important; }
+    div[data-testid=\"stSegmentedControl\"] button { background:#21262d; color:#c9d1d9; border-color:#30363d; }
+    div[data-testid=\"stSegmentedControl\"] button[aria-selected=\"true\"] { background:#1f6feb; border-color:#1f6feb; color:#fff; }
     hr { border-color:#30363d; }
     .main-subtitle { color:#8b949e; }
-    .stButton>button[data-baseweb="button"] { background:#21262d; color:#c9d1d9; border-color:#30363d; }
-    .stTextInput input, .stNumberInput input, .stSelectbox div { background:#0d1117; color:#c9d1d9; border-color:#30363d; }
-    .stDataFrame { background:#161b22; }
+    .stButton>button { background:#21262d; color:#c9d1d9; border-color:#30363d; }
+    .stButton>button:hover { border-color:#1f6feb; color:#fff; }
+    .stTextInput input, .stNumberInput input, .stSelectbox [data-baseweb=\"select\"] > div { background:#0d1117 !important; color:#c9d1d9 !important; border-color:#30363d !important; }
+    .stDataFrame, .stDataFrame * { background:#161b22 !important; color:#c9d1d9 !important; }
     .stExpander { background:#161b22; border-color:#30363d; }
+    .stExpander * { color:#c9d1d9 !important; }
+    .stTabs [data-baseweb=\"tab-panel\"] { background:#0d1117; }
+    .stTabs [data-baseweb=\"tab\"] { background:#161b22; color:#c9d1d9; }
+    .stTabs [aria-selected=\"true\"] { background:#1f6feb !important; color:#fff !important; }
     .st-key-dash button { border-radius:12px; padding:14px 10px; font-size:0.82rem; line-height:1.4; white-space:pre-line; min-height:95px; background:#161b22; border:1px solid #30363d !important; color:#c9d1d9; }
     .st-key-dash button p { font-weight:700; font-size:1.25rem; color:#c9d1d9; margin:4px 0 0 0; }
+    .stAlert, [data-testid=\"stInfoBox\"] { background:#161b22 !important; color:#c9d1d9 !important; border-color:#30363d !important; }
+    [data-testid=\"stNotification\"] { background:#161b22 !important; }
 """
 
 mobile_css = """
     @media (max-width: 768px) {
         div[data-testid=\"stHorizontalBlock\"] { flex-wrap:wrap !important; }
         div[data-testid=\"stHorizontalBlock\"] > div { min-width:100% !important; flex:1 1 100% !important; }
-        div[data-testid=\"stSegmentedControl\"] button { font-size:0.7rem; padding:0.2rem 0.1rem; }
+        div[data-testid=\"stSegmentedControl\"] button { font-size:0.65rem; padding:0.2rem 0.1rem; }
         .stMetric { padding:4px 6px; }
+        section[data-testid=\"stSidebar\"] { width:100% !important; }
+    }
+    @media (max-width: 480px) {
+        .stMetric { font-size:0.75rem; }
     }
 """
 
@@ -428,9 +451,19 @@ with st.sidebar:
         t2 = st.text_input("Chat ID", value=tg["chat_id"] or "",
                            placeholder="-100xxx", key="tg_cid",
                            label_visibility="collapsed")
-        if st.button("💾 保存 Telegram", use_container_width=True):
+        if st.button("💾 保存 Telegram", key="tg_save_btn", use_container_width=True):
             cfg = load_config(); cfg["telegram_token"] = t1; cfg["telegram_chat_id"] = t2
             save_config(cfg); st.rerun()
+
+    with st.expander("💬 微信推送 (Server酱)", expanded=False):
+        from src.utils.config import get_serverchan_key
+        sck = get_serverchan_key()
+        if sck: st.caption("✅ 已配置 (去 sct.ftqq.com 获取 SendKey)")
+        sk = st.text_input("SendKey", value=sck or "",
+                           placeholder="SCTxxxxx...", type="password",
+                           key="sck_key", label_visibility="collapsed")
+        if st.button("💾 保存", key="sck_save", use_container_width=True):
+            cfg = load_config(); cfg["serverchan_key"] = sk; save_config(cfg); st.rerun()
 
     st.divider()
     st.caption(f"自选股 {len(st.session_state.watchlist)} 只")
@@ -575,13 +608,14 @@ if page == "🏠 仪表盘":
             info = info_for(key)
             df = get_data_notify(info["symbol"], info["market"], info["name"])
             from src.data.charting import kline_chart
-            fig = kline_chart(df, title=info["name"], indicators=["ma", "macd", "rsi"], height=550)
+            fig = kline_chart(df, title=info["name"], indicators=["ma"], height=300)
             st.plotly_chart(fig, use_container_width=True)
 
-            risk = calc_all_risk_metrics(df)
-            cols2 = st.columns(5)
-            for col2, (k, v) in zip(cols2, risk.items()):
-                col2.metric(k, fmt_risk(k, v), help=RISK_TIPS.get(k, ""))
+            with st.expander("📊 风控 & 详细指标"):
+                risk = calc_all_risk_metrics(df)
+                cols2 = st.columns(5)
+                for col2, (k, v) in zip(cols2, risk.items()):
+                    col2.metric(k, fmt_risk(k, v), help=RISK_TIPS.get(k, ""))
 
 # ═══════════════════════════════════════════════════════════
 #  🔮 预测

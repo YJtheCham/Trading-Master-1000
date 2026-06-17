@@ -348,6 +348,17 @@ def config_set_llm(api_key: str):
     console.print("也可以通过环境变量设置: export DEEPSEEK_API_KEY=你的key")
 
 
+@config.command(name="set-serverchan-key")
+@click.argument("sendkey")
+def config_set_sck(sendkey: str):
+    """设置 Server酱 SendKey (微信推送)"""
+    cfg = load_config()
+    cfg["serverchan_key"] = sendkey
+    save_config(cfg)
+    console.print(f"[green]Server酱 SendKey 已保存[/green]")
+    console.print("获取 SendKey: https://sct.ftqq.com")
+
+
 @cli.command()
 @click.argument("symbol")
 @click.argument("market", type=click.Choice(["A", "HK", "US"]))

@@ -25,6 +25,8 @@ def notify(event: AlertEvent, method: str = "all"):
         terminal_alert(msg)
     if method in ("telegram", "all"):
         telegram_notify(f"StockPredict: {event.rule.symbol}", event.message, event.action)
+    if method in ("wechat", "all"):
+        wechat_notify(f"{event.rule.symbol} {event.rule.market}", event.message, event.action)
 
 
 def _format(event: AlertEvent) -> str:
@@ -68,6 +70,25 @@ def terminal_alert(msg: str):
     print(f"\033[91m⚠️  交易提醒\033[0m", file=sys.stderr)
     print(msg, file=sys.stderr)
     print(f"\033[93m{'='*60}\033[0m\n", file=sys.stderr)
+
+
+def wechat_notify(title: str, message: str, action: str = ""):
+    """通过 Server酱 推送微信消息 (免费, 无需公众号)"""
+    from src.utils.config import get_serverchan_key
+    key = get_serverchan_key()
+    if not key:
+        return
+    text = f"{message}"
+    if action:
+        text += f"\n操作建议: {action}"
+    try:
+        import requests
+        requests.post(f"https://sctapi.ftqq.com/{key}.send", data={
+            "title": f"StockPredict: {title}",
+            "desp": text,
+        }, timeout=5)
+    except Exception:
+        pass
 
 
 def telegram_notify(title: str, message: str, action: str = ""):

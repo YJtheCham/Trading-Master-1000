@@ -72,3 +72,12 @@ def get_telegram_config() -> dict:
     token = os.environ.get("TELEGRAM_BOT_TOKEN", "") or cfg.get("telegram_token", "")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID", "") or cfg.get("telegram_chat_id", "")
     return {"token": token, "chat_id": chat_id}
+
+
+def get_serverchan_key() -> str:
+    """Server酱 SendKey (微信推送)"""
+    import os
+    key = os.environ.get("SERVERCHAN_SENDKEY", "") or os.environ.get("SCT_KEY", "")
+    if key:
+        return key
+    return load_config().get("serverchan_key", "")
