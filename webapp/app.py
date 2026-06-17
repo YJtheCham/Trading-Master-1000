@@ -644,7 +644,7 @@ if page == "🏠 仪表盘":
     if not ordered:
         st.info(f"分组「{ag}」中暂无股票")
         st.stop()
-    COLS_PER_ROW = 4
+    COLS_PER_ROW = 4  # desktop default (overridden by CSS for mobile)
 
     # 拖拽排序模式
     if st.checkbox("✋ 拖拽排序", False, key="sort_toggle_2"):
