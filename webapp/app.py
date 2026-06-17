@@ -1516,20 +1516,28 @@ elif page == "🔔 交易监控":
 # ═══════════════════════════════════════════════════════════
 elif page == "🔍 选股器":
     st.title("🔍 条件选股器")
-    st.caption("用技术条件扫描自选股, 筛选符合条件的股票")
+    st.caption("扫描全市场, 筛选符合技术条件的股票")
 
     from src.recommend.screener import screen_market
     from src.alerts.models import CONDITION_TYPES as CT, AlertRule
     from src.data.stock_db import get_db
+
+    SCOPE_MAP = {
+        "自选股": "watchlist",
+        "全部A股": "all_a",
+        "创业板(300)": "gem",
+        "科创板(688)": "star",
+        "沪深主板(600/000/002)": "main_board",
+    }
 
     col1, col2, col3 = st.columns(3)
     with col1:
         condition = st.selectbox("条件", list(CT.keys()),
                                  format_func=lambda x: CT[x], key="scr_cond")
     with col2:
-        market = st.selectbox("市场", ["A", "HK", "US"], key="scr_mkt")
+        scope = st.selectbox("选股范围", list(SCOPE_MAP.keys()), key="scr_scope")
     with col3:
-        limit = st.slider("最多结果", 5, 50, 20, key="scr_limit")
+        limit = st.slider("最多结果", 5, 100, 30, key="scr_limit")
 
     params = {}
     if condition in ("above_ma", "below_ma"):
@@ -1547,14 +1555,35 @@ elif page == "🔍 选股器":
         params["ratio"] = st.number_input("倍数", 1.5, 5.0, 2.0, key="sp_vr")
     elif condition in ("above_price", "below_price"):
         params["threshold"] = st.number_input("价格阈值", 0.0, 10000.0, 100.0, key="sp_pt")
+    elif condition in ("alpha120",):
+        params["threshold"] = st.number_input("偏离阈值", 0.001, 0.1, 0.02, 0.005, key="sp_a120", format="%.4f")
+    elif condition in ("alpha006",):
+        params["threshold"] = st.number_input("相关阈值", 0.1, 1.0, 0.3, 0.1, key="sp_a006")
+    elif condition in ("alpha053",):
+        params["threshold_up"] = st.number_input("上涨阈值", 1.01, 1.2, 1.05, 0.01, key="sp_a53u")
+        params["threshold_dn"] = st.number_input("下跌阈值", 0.8, 0.99, 0.95, 0.01, key="sp_a53d")
 
     if st.button("🔍 开始扫描", type="primary", use_container_width=True, key="scr_scan"):
-        with st.spinner("扫描中..."):
-            scan_list = [key.split("-", 1)[1] for key in st.session_state.watchlist
-                        if key.startswith(market + "-")]
-            if not scan_list:
-                scan_list = None
-            hits = screen_market(condition, params, market, scan_list, limit)
+        # 构建扫描列表
+        scope_type = SCOPE_MAP[scope]
+        if scope_type == "watchlist":
+            scan_list = [k.split("-", 1)[1] for k in st.session_state.watchlist if k.startswith("A-")]
+        else:
+            db = get_db()
+            all_a = [code for code, _ in db.all_stocks("A")]
+            if scope_type == "all_a":
+                scan_list = all_a[:500]  # 前500只, 防止太慢
+            elif scope_type == "gem":
+                scan_list = [c for c in all_a if c.startswith("300")]
+            elif scope_type == "star":
+                scan_list = [c for c in all_a if c.startswith("688")]
+            elif scope_type == "main_board":
+                scan_list = [c for c in all_a if c.startswith(("600", "000", "002"))]
+            else:
+                scan_list = all_a[:500]
+
+        with st.spinner(f"扫描 {len(scan_list)} 只股票..."):
+            hits = screen_market(condition, params, "A", scan_list, limit)
 
         if hits:
             st.success(f"找到 {len(hits)} 只符合条件的股票")
