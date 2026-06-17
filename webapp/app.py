@@ -1,7 +1,7 @@
 """
 启动: streamlit run webapp/app.py
 """
-import sys, time
+import sys, time, json
 from pathlib import Path
 from datetime import datetime
 
@@ -310,7 +310,24 @@ if "stock_groups" not in st.session_state:
         st.session_state.stock_groups[key] = item.group or "默认"
 
 if "stock_order" not in st.session_state:
-    st.session_state.stock_order = list(st.session_state.watchlist)
+    # 从持久化文件加载排序
+    order_file = DATA_DIR / "watchlist_order.json"
+    try:
+        if order_file.exists():
+            saved = json.loads(order_file.read_text())
+            # 只保留仍在 watchlist 中的
+            st.session_state.stock_order = [k for k in saved if k in st.session_state.watchlist]
+        else:
+            st.session_state.stock_order = list(st.session_state.watchlist)
+    except Exception:
+        st.session_state.stock_order = list(st.session_state.watchlist)
+
+def _save_stock_order():
+    try:
+        order_file = DATA_DIR / "watchlist_order.json"
+        order_file.write_text(json.dumps(st.session_state.stock_order, ensure_ascii=False))
+    except Exception:
+        pass
 if "active_group" not in st.session_state:
     st.session_state.active_group = "全部"
 
@@ -637,6 +654,7 @@ if page == "🏠 仪表盘":
         if k not in ordered:
             ordered.append(k)
     st.session_state.stock_order = ordered
+    _save_stock_order()
     ag = st.session_state.active_group
     if ag != "全部":
         ordered = [k for k in ordered
@@ -664,6 +682,7 @@ if page == "🏠 仪表盘":
         new_order = sortable_cards(cd, height=600)
         if new_order:
             st.session_state.stock_order = [k for k in new_order if k in st.session_state.watchlist]
+            _save_stock_order()
             st.rerun()
         st.stop()
 
