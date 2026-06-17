@@ -96,22 +96,67 @@ dark_css = base_css + """
 
 mobile_css = """
     @media (max-width: 768px) {
-        /* 侧边栏收窄 */
-        section[data-testid="stSidebar"] { width:100% !important; padding:8px; }
+        /* === 防止页面横向溢出 === */
+        body, [data-testid="stAppViewContainer"] { max-width:100vw !important; overflow-x:hidden !important; }
+
+        /* === 侧边栏: 恢复原生 overlay 行为, 不占满全屏 === */
+        section[data-testid="stSidebar"] { min-width:280px !important; max-width:85vw !important; padding:8px !important; }
         section[data-testid="stSidebar"] .stButton button { width:100%; }
-        /* 导航标签缩小 */
-        div[data-testid="stSegmentedControl"] button { font-size:0.6rem; padding:0.15rem 0.05rem; }
-        /* 卡片收窄 */
-        [data-testid="stHorizontalBlock"] > [data-testid="column"] { min-width:140px !important; flex:1 1 140px !important; }
-        .stMetric { padding:4px 6px; font-size:0.75rem; }
-        /* 主区域padding缩小 */
-        .stMain { padding:0.5rem !important; }
-        /* 图表缩小 */
-        .js-plotly-plot { max-height:250px; }
+
+        /* === 9个导航标签: 横向可滑动, 字号可读 === */
+        div[data-testid="stSegmentedControl"] {
+            width:100% !important; overflow-x:auto !important;
+            -webkit-overflow-scrolling:touch; scrollbar-width:none;
+        }
+        div[data-testid="stSegmentedControl"]::-webkit-scrollbar { display:none; }
+        div[data-testid="stSegmentedControl"] > div {
+            width:max-content !important; min-width:100% !important;
+            display:flex !important; flex-wrap:nowrap !important;
+        }
+        div[data-testid="stSegmentedControl"] button {
+            font-size:0.72rem !important; padding:0.35rem 0.5rem !important;
+            white-space:nowrap !important; flex-shrink:0 !important; border-radius:6px !important;
+        }
+
+        /* === 仪表盘卡片: 2列自动换行 (仅主内容区, 不影响侧边栏) === */
+        [data-testid="stAppViewContainer"] [data-testid="stHorizontalBlock"] {
+            flex-wrap:wrap !important; gap:6px !important;
+        }
+        [data-testid="stAppViewContainer"] [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+            min-width:calc(50% - 6px) !important; max-width:calc(50% - 6px) !important;
+            flex:0 0 calc(50% - 6px) !important;
+        }
+        .st-key-dash button { min-height:80px !important; padding:10px 6px !important; font-size:0.72rem !important; }
+        .st-key-dash button p { font-size:1rem !important; }
+        .stMetric { padding:4px 8px !important; font-size:0.78rem !important; }
+
+        /* === 主区域padding === */
+        .stMain, [data-testid="stAppViewContainer"] > section { padding:0.5rem !important; }
+
+        /* === 图表不溢出 === */
+        .js-plotly-plot, .plotly { max-width:100% !important; overflow-x:auto !important; }
+        .js-plotly-plot .plot-container { max-width:100% !important; }
+        .js-plotly-plot { max-height:280px !important; }
+
+        /* === 表格横向滚动 === */
+        div[data-testid="stDataFrame"], div[data-testid="stTable"] { overflow-x:auto !important; }
+
+        /* === 标题/文字缩小 === */
+        h1 { font-size:1.3rem !important; }
+        h2 { font-size:1.1rem !important; }
+        h3 { font-size:1rem !important; }
+        .streamlit-expanderHeader { font-size:0.85rem !important; }
+        .stTabs [data-baseweb="tab"] { font-size:0.8rem !important; padding:0.4rem 0.6rem !important; }
     }
     @media (max-width: 480px) {
-        [data-testid="stHorizontalBlock"] > [data-testid="column"] { min-width:45% !important; flex:1 1 45% !important; }
-        div[data-testid="stSegmentedControl"] button { font-size:0.5rem; padding:0.1rem 0.02rem; }
+        [data-testid="stAppViewContainer"] [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+            min-width:calc(50% - 4px) !important; max-width:calc(50% - 4px) !important;
+            flex:0 0 calc(50% - 4px) !important;
+        }
+        div[data-testid="stSegmentedControl"] button { font-size:0.68rem !important; padding:0.3rem 0.4rem !important; }
+        .js-plotly-plot { max-height:220px !important; }
+        .stMetric { padding:3px 6px !important; font-size:0.72rem !important; }
+        h1 { font-size:1.15rem !important; }
     }
 """
 
