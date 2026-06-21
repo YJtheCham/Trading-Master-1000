@@ -31,6 +31,22 @@ def notify(event: AlertEvent, method: str = "all"):
         pushplus_notify(f"{event.rule.symbol} {event.rule.market}", event.message, event.action)
 
 
+def notify_connection_alert(status: dict):
+    """数据源连接异常告警"""
+    msg = (
+        f"⚠️ 数据源连接异常\n"
+        f"近1小时: {status['recent_checks']}次查询, "
+        f"成功率 {status['success_rate']}%\n"
+        f"连续失败: {status['consecutive_failures']}次\n"
+        f"最后错误: {status.get('last_error', '未知')}\n"
+        f"请检查网络连接或数据源配置"
+    )
+    log_to_file(f"[{datetime.now().isoformat()}] 连接告警: {msg}")
+    desktop_notify("StockPredict 连接异常", f"连续失败{status['consecutive_failures']}次")
+    telegram_notify("连接异常", msg, "检查网络/数据源")
+    wechat_notify("连接异常", msg, "检查网络/数据源")
+
+
 def _format(event: AlertEvent) -> str:
     return (
         f"[{event.triggered_at}] {event.rule.summary}\n"

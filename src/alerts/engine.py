@@ -1,21 +1,25 @@
 """
-监控引擎: 定时检查告警规则并触发通知
+监控引擎: 定时检查告警规则并触发通知 (并行查询)
 """
+import concurrent.futures
 import json
 import logging
 import time
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
+from functools import partial
 from typing import Optional
 
 from .models import AlertRule, AlertEvent, CONDITION_TYPES
 from .conditions import evaluate
 from .notifier import notify, log_to_file
+from .health import record_check, get_health, summary
 
 logger = logging.getLogger(__name__)
 
 RULES_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "alert_rules.json"
+_rules_lock = threading.Lock()
 
 
 # ─── 规则持久化 ───────────────────────────────────────────
@@ -31,32 +35,89 @@ def load_rules() -> list[AlertRule]:
 
 
 def save_rules(rules: list[AlertRule]):
-    RULES_FILE.write_text(
-        json.dumps([r.__dict__ for r in rules], ensure_ascii=False, indent=2))
+    with _rules_lock:
+        RULES_FILE.write_text(
+            json.dumps([r.__dict__ for r in rules], ensure_ascii=False, indent=2))
 
 
 def add_rule(rule: AlertRule) -> AlertRule:
-    rules = load_rules()
-    rules.append(rule)
-    save_rules(rules)
+    with _rules_lock:
+        rules = load_rules()
+        rules.append(rule)
+        save_rules(rules)
     return rule
 
 
 def remove_rule(uid: str) -> bool:
-    rules = load_rules()
-    new_rules = [r for r in rules if r.uid != uid]
-    save_rules(new_rules)
+    with _rules_lock:
+        rules = load_rules()
+        new_rules = [r for r in rules if r.uid != uid]
+        save_rules(new_rules)
     return len(new_rules) < len(rules)
 
 
 def toggle_rule(uid: str, enabled: Optional[bool] = None) -> Optional[AlertRule]:
-    rules = load_rules()
-    for r in rules:
-        if r.uid == uid:
-            r.enabled = enabled if enabled is not None else not r.enabled
-            save_rules(rules)
-            return r
+    with _rules_lock:
+        rules = load_rules()
+        for r in rules:
+            if r.uid == uid:
+                r.enabled = enabled if enabled is not None else not r.enabled
+                save_rules(rules)
+                return r
     return None
+
+
+def _mark_triggered(rule: AlertRule, triggered_at: str):
+    """线程安全: 记录规则触发时间"""
+    with _rules_lock:
+        rules = load_rules()
+        for r in rules:
+            if r.uid == rule.uid:
+                r.last_triggered = triggered_at
+                break
+        save_rules(rules)
+
+
+def _check_single_rule(rule: AlertRule) -> None:
+    """在独立线程中检查单条规则"""
+    from src.data.fetcher import fetch_realtime_data
+    t0 = time.monotonic()
+    try:
+        df = fetch_realtime_data(rule.symbol, rule.market, period_days=120)
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        if df.empty or len(df) < 5:
+            record_check("monitor", rule.symbol, rule.market,
+                         success=False, error="数据为空或不足5条",
+                         latency_ms=elapsed_ms)
+            return
+        record_check("monitor", rule.symbol, rule.market,
+                     success=True, latency_ms=elapsed_ms)
+    except Exception as e:
+        elapsed_ms = (time.monotonic() - t0) * 1000
+        record_check("monitor", rule.symbol, rule.market,
+                     success=False, error=str(e)[:100],
+                     latency_ms=elapsed_ms)
+        return
+
+    triggered, message, action = evaluate(rule, df)
+    if triggered:
+        event = AlertEvent(
+            rule=rule,
+            current_price=float(df["Close"].iloc[-1]),
+            message=message,
+            action=action,
+        )
+        notify(event)
+        _mark_triggered(rule, event.triggered_at)
+
+
+def _check_connection_alert():
+    health = get_health()
+    if health.should_alert():
+        from .notifier import notify_connection_alert
+        s = summary()
+        notify_connection_alert(s)
+        health.mark_alerted()
 
 
 # ─── 监控引擎 ─────────────────────────────────────────────
@@ -100,45 +161,25 @@ class AlertEngine:
         rules = load_rules()
         now = datetime.now()
 
+        to_check = []
         for rule in rules:
             if not rule.enabled:
                 continue
-
-            # 冷却检查
             if rule.last_triggered:
                 last = datetime.fromisoformat(rule.last_triggered)
                 if now - last < timedelta(minutes=rule.cooldown_minutes):
                     continue
+            to_check.append(rule)
 
-            try:
-                self._check_rule(rule)
-            except Exception as e:
-                logger.warning(f"检查规则 {rule.uid} 失败: {e}")
-
-    def _check_rule(self, rule: AlertRule):
-        from src.data.fetcher import fetch_data
-
-        df = fetch_data(rule.symbol, rule.market, period_days=120, use_cache=True)
-        if df.empty or len(df) < 5:
+        if not to_check:
             return
 
-        triggered, message, action = evaluate(rule, df)
-        if triggered:
-            event = AlertEvent(
-                rule=rule,
-                current_price=float(df["Close"].iloc[-1]),
-                message=message,
-                action=action,
-            )
-            notify(event)
+        # Wind MCP 单次 ~6s, 3 workers 并行 → 6条规则 ~12s
+        max_workers = min(3, len(to_check))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
+            pool.map(_check_single_rule, to_check)
 
-            # 更新触发时间
-            rules = load_rules()
-            for r in rules:
-                if r.uid == rule.uid:
-                    r.last_triggered = event.triggered_at
-                    break
-            save_rules(rules)
+        _check_connection_alert()
 
 
 # 全局单例

@@ -29,6 +29,7 @@ CONDITION_TYPES = {
     "alpha006":        "Alpha006 (开量与10日量相关性反值)",
     "alpha053":        "Alpha053 (10日收盘价比率)",
     "alpha009":        "Alpha009 (5日均价下移)",
+    "alpha015":        "Alpha015 (量价秩相关反值)",
 }
 
 

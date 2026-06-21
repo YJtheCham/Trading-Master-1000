@@ -1,120 +1,120 @@
 """
-可拖拽排序组件 — HTML5 原生 DnD + sessionStorage 回传
-零外部依赖, 全浏览器兼容
+可拖拽 + 可点击 + 可分组 卡片仪表盘
+
+JS↔Python 通信: 通过 Streamlit.setComponentValue 回传动作,
+无需页面跳转, 无 query_params 竞态.
 """
 import json
 import streamlit.components.v1 as components
 import streamlit as st
 
 
-_RECOVERY_DONE = "_sort_recovery_done"
-
-
-def sortable_cards(cards: list[dict], height: int = 550) -> list[str] | None:
-    """
-    Args:
-        cards: [{"key": "A-600519", "name": "茅台", "price": "1520.50", "change": 1.2}, ...]
-    Returns:
-        新 key 列表, 或 None
-    """
-    dark = cards[0].get("dark", False) if cards else False
-    bg = "#0d1117" if dark else "#f8f9fa"
-    card_bg = "#161b22" if dark else "#fff"
-    fg = "#c9d1d9" if dark else "#212529"
-    border = "#30363d" if dark else "#dee2e6"
-    cards_js = json.dumps(cards, ensure_ascii=False)
-
-    html = f"""<!DOCTYPE html><html><head><meta charset="utf-8"><style>
-body {{ margin:0; padding:8px; background:{bg}; font-family:-apple-system,BlinkMacSystemFont,sans-serif; }}
-.grid {{ display:flex; flex-wrap:wrap; gap:8px; }}
-.card {{ background:{card_bg}; color:{fg}; border:1px solid {border}; border-radius:10px;
-        padding:10px 8px; width:calc(25% - 14px); min-width:120px; box-sizing:border-box;
-        text-align:center; cursor:grab; user-select:none; transition:box-shadow .15s; }}
-.card:hover {{ box-shadow:0 2px 12px rgba(31,111,235,0.3); }}
-.card:active {{ cursor:grabbing; }}
-.card.dragging {{ opacity:0.35; }}
-.card.drag-over {{ box-shadow:0 0 0 2px #1f6feb !important; }}
-.nm {{ font-size:0.72rem; color:#8b949e; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }}
-.pr {{ font-size:1.15rem; font-weight:700; margin:4px 0; }}
-.ch {{ font-size:0.78rem; font-weight:500; }}
-.toolbar {{ text-align:center; margin-top:12px; }}
-.btn {{ padding:8px 24px; background:#1f6feb; color:#fff; border:none; border-radius:6px;
-        cursor:pointer; font-size:0.85rem; margin:0 4px; }}
-.btn-gray {{ background:#484f58; }}
-</style></head><body>
-<div class="grid" id="g"></div>
-<div class="toolbar">
-  <button class="btn" onclick="save()">💾 保存</button>
-  <button class="btn btn-gray" onclick="cancel()">取消</button>
-</div>
-<script>
-var ITEMS = {cards_js};
-var g = document.getElementById("g");
-var dragSrc = null;
-
-function render() {{
-  g.innerHTML = "";
-  ITEMS.forEach(function(c, i) {{
-    var chg = parseFloat(c.change) || 0;
-    var clr = chg >= 0 ? "#26a69a" : "#ef5350";
-    var d = document.createElement("div");
-    d.className = "card"; d.draggable = true; d.setAttribute("data-i", i);
-    d.innerHTML = '<div class="nm">' + c.name + '</div>' +
-      '<div class="pr">' + (c.price||"-") + '</div>' +
-      '<div class="ch" style="color:' + clr + '">' + (chg>=0?'+':'') + chg.toFixed(2) + '%</div>';
-    d.addEventListener("dragstart", function(e) {{ dragSrc = this; this.classList.add("dragging"); e.dataTransfer.setData("t", this.getAttribute("data-i")); }});
-    d.addEventListener("dragend", function(e) {{ this.classList.remove("dragging"); }});
-    d.addEventListener("dragover", function(e) {{ e.preventDefault(); this.classList.add("drag-over"); }});
-    d.addEventListener("dragleave", function(e) {{ this.classList.remove("drag-over"); }});
-    d.addEventListener("drop", function(e) {{
-      e.preventDefault(); this.classList.remove("drag-over");
-      if (dragSrc !== this) {{
-        var f = parseInt(dragSrc.getAttribute("data-i"));
-        var t = parseInt(this.getAttribute("data-i"));
-        ITEMS.splice(t, 0, ITEMS.splice(f, 1)[0]);
-        render();
-      }}
-    }});
-    g.appendChild(d);
-  }});
-}}
-function save() {{
-  var keys = ITEMS.map(function(c) {{ return c.key; }});
-  sessionStorage.setItem("_sortable_keys", JSON.stringify(keys));
-  window.top.location.reload();
-}}
-function cancel() {{ window.top.location.reload(); }}
-render();
-</script></body></html>"""
-
-    # === 恢复机制: 检查 sessionStorage ===
-    if not st.session_state.get(_RECOVERY_DONE):
-        # 注入 JS 检查 sessionStorage, 有值则写入 query param
-        st.markdown("""
-<script>
-(function(){
-  var v = sessionStorage.getItem("_sortable_keys");
-  if (v) {
-    sessionStorage.removeItem("_sortable_keys");
-    var sp = new URLSearchParams(window.location.search);
-    sp.set("_s", v);
-    window.location.search = sp.toString();
-  }
-})();
-</script>""", unsafe_allow_html=True)
-        st.session_state[_RECOVERY_DONE] = True
+def dash_cards(cards: list[dict], groups: list[str],
+               height: int = 500) -> dict | None:
+    if not cards:
         return None
 
-    # === 渲染组件 ===
-    components.html(html, height=height, scrolling=True)
+    dark = cards[0].get("dark", False) if cards else False
+    monitored_keys = [c["key"] for c in cards if c.get("monitored")]
+    bg = "#0d1117" if dark else "#ffffff"
+    card_bg = "#161b22" if dark else "#f8f9fa"
+    fg = "#c9d1d9" if dark else "#212529"
+    border = "#30363d" if dark else "#e9ecef"
+    border_hover = "#1f6feb" if dark else "#1f77b4"
+    muted = "#8b949e" if dark else "#6c757d"
+    tag_bg = "#21262d" if dark else "#e8f0fe"
+    tag_fg = "#58a6ff" if dark else "#1f77b4"
+    modal_bg = "#161b22" if dark else "#fff"
+    cards_js = json.dumps(cards, ensure_ascii=False)
+    groups_js = json.dumps(groups, ensure_ascii=False)
+    mon_js = json.dumps(monitored_keys, ensure_ascii=False)
 
-    # === 读取恢复的排序 ===
-    raw = st.query_params.get("_s", "")
-    if raw:
-        st.query_params.pop("_s", None)
-        st.session_state[_RECOVERY_DONE] = False
-        try:
-            return json.loads(raw)
-        except Exception:
-            pass
+    html = """<!DOCTYPE html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{BG;font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:6px;-webkit-user-select:none;user-select:none}
+.grid{display:flex;flex-wrap:wrap;gap:8px}
+.card{background:CBG;color:FG;border:1px solid BR;border-radius:10px;padding:10px 8px 6px;width:calc(25% - 8px);min-width:140px;text-align:center;cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .1s;position:relative}
+.card:hover{border-color:BH;box-shadow:0 2px 8px rgba(0,0,0,.12)}
+.card.monitored{border-color:#22c55e;box-shadow:0 0 0 1px #22c55e inset}
+.card.dragging{opacity:.4;transform:scale(.95)}
+.card.drag-over{border-color:BH!important;box-shadow:0 0 0 2px BH!important}
+.tag{display:inline-block;font-size:.62rem;padding:1px 6px;border-radius:8px;background:TBG;color:TFG;cursor:pointer;margin-top:4px;border:none;line-height:1.5}
+.tag:hover{filter:brightness(1.15)}
+.date{font-size:.68rem;color:MU;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px}
+.name{font-size:.78rem;color:MU;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.price{font-size:1.2rem;font-weight:700;margin:3px 0}
+.chg{font-size:.8rem;font-weight:500}
+.mo{display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.45);z-index:100;justify-content:center;align-items:center}
+.mo.on{display:flex}
+.mb{background:MOBG;border-radius:12px;padding:16px;min-width:200px;max-width:280px;box-shadow:0 8px 32px rgba(0,0,0,.3)}
+.mb h4{font-size:.85rem;margin-bottom:10px;color:FG}
+.mi{padding:6px 10px;border-radius:6px;cursor:pointer;font-size:.78rem;color:FG;margin-bottom:2px}
+.mi:hover{background:TBG}
+.mi.sel{color:TFG;font-weight:600}
+.mn{display:flex;gap:4px;margin-top:8px}
+.mn input{flex:1;padding:4px 8px;border-radius:6px;border:1px solid BR;background:BG;color:FG;font-size:.78rem;outline:none}
+.mn button{padding:4px 10px;border-radius:6px;background:TBG;color:TFG;border:none;cursor:pointer;font-size:.75rem}
+@media(max-width:768px){.card{width:calc(50% - 6px);min-width:0;padding:8px 6px}.price{font-size:1rem}.name,.date{font-size:.68rem}}
+</style></head><body>
+<div class="grid" id="g"></div>
+<div class="mo" id="ov"><div class="mb" id="mb"></div></div>
+<script>
+var I=ITEMS,G=GRPS,M=MON,dS=null,drg=false,sX=0,sY=0;
+function el(t,c){var e=document.createElement(t);if(c)e.className=c;return e}
+function tx(t){return document.createTextNode(t)}
+function send(v){window.parent.postMessage({isStreamlitMessage:true,type:'streamlit:setComponentValue',value:v},'*')}
+function rn(){
+  g.innerHTML="";
+  I.forEach(function(c,i){
+    var ch=+c.change||0,cl=ch>=0?"#26a69a":"#ef5350",m=M.indexOf(c.key)>=0;
+    var d=el("div","card"+(m?" monitored":""));
+    d.draggable=true;d.dataset.idx=i;
+    var de=el("div","date");de.appendChild(tx(c.date_label||""));d.appendChild(de);
+    var nm=el("div","name");nm.appendChild(tx(c.name));d.appendChild(nm);
+    var pr=el("div","price");pr.appendChild(tx(c.price||"-"));d.appendChild(pr);
+    var cg=el("div","chg");cg.style.color=cl;cg.appendChild(tx((ch>=0?"+":"")+ch.toFixed(2)+"%"));d.appendChild(cg);
+    var tg=el("button","tag");tg.dataset.gk=c.key;tg.appendChild(tx(c.group||"默认"));d.appendChild(tg);
+    d.addEventListener("dragstart",function(e){dS=this;drg=false;sX=e.clientX;sY=e.clientY;this.classList.add("dragging");e.dataTransfer.setData("t","x")});
+    d.addEventListener("dragend",function(e){this.classList.remove("dragging");if(!drg&&Math.abs(e.clientX-sX)<5&&Math.abs(e.clientY-sY)<5)send({action:"click",key:c.key})});
+    d.addEventListener("dragover",function(e){e.preventDefault();this.classList.add("drag-over")});
+    d.addEventListener("dragleave",function(){this.classList.remove("drag-over")});
+    d.addEventListener("drop",function(e){e.preventDefault();this.classList.remove("drag-over");if(dS&&dS!==this){drg=true;var f=+dS.dataset.idx,t=+this.dataset.idx;I.splice(t,0,I.splice(f,1)[0]);rn();send({action:"reorder",keys:I.map(function(cc){return cc.key})})}});
+    g.appendChild(d)
+  });
+  g.querySelectorAll(".tag").forEach(function(b){b.addEventListener("click",function(e){e.stopPropagation();gm(this.dataset.gk)})})
+}
+function gm(k){
+  var it=I.find(function(c){return c.key===k});if(!it)return;
+  var cu=it.group||"默认",h="<h4>修改分组: "+it.name+"</h4>";
+  G.forEach(function(grp){var a=grp===cu?" sel":"";h+='<div class="mi'+a+'" data-mk="'+k+'" data-mg="'+grp+'">'+grp+"</div>"});
+  h+='<div class="mn"><input id="ni" placeholder="新分组名..."><button id="nb">+</button></div>';
+  mb.innerHTML=h;ov.classList.add("on");
+  mb.querySelectorAll(".mi").forEach(function(el){el.addEventListener("click",function(){sg(this.dataset.mk,this.dataset.mg)})});
+  var ni=document.getElementById("ni"),nb=document.getElementById("nb");
+  if(ni)ni.addEventListener("keydown",function(e){if(e.key==="Enter")ng(k)});
+  if(nb)nb.addEventListener("click",function(){ng(k)});
+}
+ov.addEventListener("click",function(e){if(e.target===ov)ov.classList.remove("on")});
+function sg(k,grp){ov.classList.remove("on");send({action:"group",key:k,group:grp})}
+function ng(k){var v=document.getElementById("ni");if(!v||!v.value.trim())return;ov.classList.remove("on");send({action:"new_group",key:k,name:v.value.trim()})}
+rn();
+</script></body></html>"""
+
+    replacements = [
+        ("MOBG", modal_bg), ("ITEMS", cards_js), ("GRPS", groups_js), ("MON", mon_js),
+        ("CBG", card_bg), ("TBG", tag_bg), ("TFG", tag_fg),
+        ("BH", border_hover), ("BR", border), ("BG", bg), ("FG", fg), ("MU", muted),
+    ]
+    for placeholder, value in replacements:
+        html = html.replace(placeholder, value)
+
+    result = components.html(html, height=height, scrolling=True)
+
+    if isinstance(result, dict):
+        action = result.get("action")
+        if action in ("click", "reorder", "group", "new_group"):
+            return result
+
     return None

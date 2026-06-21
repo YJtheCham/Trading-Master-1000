@@ -88,12 +88,3 @@ def get_pushplus_token() -> str:
     key = os.environ.get("PUSHPLUS_TOKEN", "")
     if key: return key
     return load_config().get("pushplus_token", "")
-
-
-def get_pushplus_token() -> str:
-    """PushPlus Token (微信推送备选)"""
-    import os
-    token = os.environ.get("PUSHPLUS_TOKEN", "")
-    if token:
-        return token
-    return load_config().get("pushplus_token", "")

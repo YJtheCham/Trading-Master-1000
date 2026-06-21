@@ -380,6 +380,45 @@ def check_alpha009(prices, volumes, high, low, params):
     return False, "", ""
 
 
+def check_alpha015(prices, volumes, high, low, params):
+    """Alpha015: -rank_corr(high, volume, 3)
+
+    公式: -1 × correlation(rank(high), rank(volume), 3)
+    意义: 当高价与成交量负相关时信号为正, 预示潜在反转
+    """
+    n = params.get("window", 20)
+    threshold = params.get("threshold", 0.3)
+    if len(prices) < n + 3:
+        return False, "", ""
+
+    h = high[-n:]
+    v = volumes[-n:] if volumes is not None else np.ones(n)
+
+    # 计算 n 天窗口内每 3 天滚动秩相关
+    scores = []
+    for i in range(n - 3 + 1):
+        h_win = h[i:i + 3]
+        v_win = v[i:i + 3]
+        if np.std(h_win) < 1e-8 or np.std(v_win) < 1e-8:
+            scores.append(0)
+            continue
+        h_rank = np.argsort(np.argsort(h_win)).astype(float)
+        v_rank = np.argsort(np.argsort(v_win)).astype(float)
+        corr = np.corrcoef(h_rank, v_rank)[0, 1]
+        if np.isnan(corr):
+            corr = 0
+        scores.append(-corr)
+
+    score = float(np.mean(scores))
+    if score > threshold:
+        return (True, f"Alpha015={score:.3f} (> {threshold}), 高价量与成交量负相关",
+                "量价背离, 关注反转机会")
+    if score < -threshold:
+        return (True, f"Alpha015={score:.3f} (< {-threshold}), 高价量与成交量正相关",
+                "量价同步, 趋势延续")
+    return False, "", ""
+
+
 _checkers = {
     "above_ma": check_above_ma, "below_ma": check_below_ma,
     "above_price": check_above_price, "below_price": check_below_price,
@@ -392,6 +431,7 @@ _checkers = {
     "volume_breakout": check_volume_breakout, "ma_triple": check_ma_triple,
     "alpha120": check_alpha120, "alpha006": check_alpha006,
     "alpha053": check_alpha053, "alpha009": check_alpha009,
+    "alpha015": check_alpha015,
 }
 
 # ─── 通知预览 ─────────────────────────────────────────────
@@ -418,6 +458,7 @@ NOTIFICATION_PREVIEWS = {
     "alpha006":       ("Alpha006 量价负相关信号", "关注反转"),
     "alpha053":       ("Alpha053 10日比率信号", "趋势强弱判断"),
     "alpha009":       ("Alpha009 5日动能信号", "短期方向判断"),
+    "alpha015":       ("Alpha015 量价秩相关信号", "量价背离, 关注反转"),
 }
 
 

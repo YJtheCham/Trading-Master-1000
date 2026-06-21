@@ -29,6 +29,8 @@ class PredictionRecord:
     final_prediction: float = 0.0
     direction: str = ""
     mape: float = 0.0
+    data_source: str = ""
+    model_params: dict = field(default_factory=dict)
 
     @property
     def final_pct(self) -> float:
@@ -54,9 +56,9 @@ def save_history(records: list[PredictionRecord]):
 
 def add_prediction(symbol: str, market: str, stock_name: str,
                    model: str, forecast: np.ndarray,
-                   forecast_dates: list, last_price: float, mape: float) -> PredictionRecord:
+                   forecast_dates: list, last_price: float, mape: float,
+                   data_source: str = "", model_params: dict = None) -> PredictionRecord:
     f_list = forecast.tolist() if hasattr(forecast, "tolist") else list(forecast)
-    # 确保所有值是 JSON 序列化兼容的 Python 类型
     f_list = [float(v) for v in f_list]
     steps = len(f_list)
     final = f_list[-1] if steps > 0 else float(last_price)
@@ -74,11 +76,13 @@ def add_prediction(symbol: str, market: str, stock_name: str,
         final_prediction=final,
         direction=direction,
         mape=float(mape),
+        data_source=data_source,
+        model_params=model_params or {},
     )
     history = load_history()
-    # Dedup: 同股票同模型只保留最新一条
     history = [r for r in history
-               if not (r.symbol == record.symbol and r.model == record.model)]
+               if not (r.symbol == record.symbol and r.model == record.model
+                       and r.predicted_at == record.predicted_at)]
     history.append(record)
     # 最多保留 200 条
     history = history[-200:]

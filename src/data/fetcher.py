@@ -22,7 +22,7 @@ import pandas as pd
 
 from src.utils.config import CACHE_DIR, WATCHLIST_FILE, StockItem
 from .sources import (
-    MARKET_SOURCES, MockSource, check_all_sources,
+    MARKET_SOURCES, MockSource, check_all_sources, WIND_SOURCE,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,7 +48,11 @@ def _is_trading_day(market: str) -> bool:
 
 def _cache_fresh(cache_path: str, market: str, max_age_hours: int = 24,
                  max_age_minutes: int = None) -> bool:
-    """判断缓存是否有效"""
+    """判断缓存是否有效
+
+    额外检查: 如果缓存中最新日期不是今天 (或最近交易日),
+    说明数据可能来自延迟源 (Tushare/Yahoo), 不应视为新鲜.
+    """
     path = Path(cache_path)
     if not path.exists():
         return False
@@ -56,11 +60,24 @@ def _cache_fresh(cache_path: str, market: str, max_age_hours: int = 24,
     mtime = datetime.fromtimestamp(path.stat().st_mtime)
     now = datetime.now()
 
-    # 如果指定了最大分钟数, 直接按分钟判断
     if max_age_minutes is not None:
         return (now - mtime).total_seconds() < max_age_minutes * 60
 
-    # 交易日: 收盘后缓存当天有效
+    # 检查缓存数据最新日期是否够新
+    try:
+        df = pd.read_parquet(cache_path, columns=["Date"])
+        if not df.empty:
+            latest = pd.to_datetime(df["Date"].iloc[-1])
+            if hasattr(latest, "date"):
+                latest_date = latest.date()
+            else:
+                latest_date = latest
+            # 数据最新日期距今超过 3 天 → 不新鲜
+            if (now.date() - latest_date).days > 3:
+                return False
+    except Exception:
+        pass
+
     if _is_trading_day(market):
         if mtime.date() == now.date():
             return True
@@ -99,6 +116,13 @@ def fetch_data(symbol: str, market: str, period_days: int = 730,
     # 遍历数据源
     sources = MARKET_SOURCES.get(market, [])
     errors = []
+    cached_df = None
+    # 如果有缓存但不新鲜, 先读出来作为基准
+    if Path(cache_path).exists():
+        try:
+            cached_df = pd.read_parquet(cache_path)
+        except Exception:
+            pass
 
     for source in sources:
         result = source.run_historical(symbol, period_days, market)
@@ -109,11 +133,26 @@ def fetch_data(symbol: str, market: str, period_days: int = 730,
             issues = validate_data(df)
             if issues:
                 logger.warning(f"{source.name} {symbol} 数据质量问题: {issues}")
-            # 缓存
-            try:
-                df.to_parquet(cache_path, index=False)
-            except Exception:
-                pass
+            # 缓存写入策略: 只有比已有缓存更新才写入
+            should_cache = True
+            if cached_df is not None and not cached_df.empty and "Date" in cached_df.columns and "Date" in df.columns:
+                try:
+                    old_latest = pd.to_datetime(cached_df["Date"]).max()
+                    new_latest = pd.to_datetime(df["Date"]).max()
+                    today = datetime.now().date()
+                    # 如果缓存数据有未来日期（Mock数据特征），无条件用新数据覆盖
+                    if hasattr(old_latest, "date") and old_latest.date() > today:
+                        logger.info(f"{source.name} 缓存含有未来日期({old_latest.date()}), 用新数据覆盖")
+                    elif new_latest < old_latest:
+                        should_cache = False
+                        logger.info(f"{source.name} 数据({new_latest.date()})比缓存({old_latest.date()})旧, 不覆盖缓存")
+                except Exception:
+                    pass
+            if should_cache:
+                try:
+                    df.to_parquet(cache_path, index=False)
+                except Exception:
+                    pass
             return df
         errors.append(f"{source.name}: {result.error}")
 
@@ -132,6 +171,28 @@ def get_realtime_price(symbol: str, market: str) -> float | None:
         except Exception:
             continue
     return None
+
+
+class WindUnavailableError(ConnectionError):
+    """Wind MCP 不可用, 需要实时数据但无法获取"""
+
+
+def fetch_realtime_data(symbol: str, market: str, period_days: int = 120) -> pd.DataFrame:
+    """获取实时数据 (仅 Wind MCP), 用于策略推荐 / 交易监控
+
+    Wind 不可用时抛出 WindUnavailableError, 不回退免费源,
+    因为免费源无实时数据, 回退只会掩盖问题.
+    """
+    if market == "A":
+        result = WIND_SOURCE.run_historical(symbol, period_days, market)
+        if result.success and result.data is not None and not result.data.empty:
+            df = result.data
+            from .cleaning import clean_market_data
+            df = clean_market_data(df)
+            return df
+        raise WindUnavailableError(
+            f"Wind MCP 不可用 ({result.error}), 无法获取 {symbol} 实时数据")
+    return fetch_data(symbol, market, period_days=period_days)
 
 
 # ─── 诊断工具 ─────────────────────────────────────────────

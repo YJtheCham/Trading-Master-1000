@@ -392,10 +392,10 @@ def backtest(symbol, market, strategy, capital, warmup, retrain_freq, plot):
     if strategy == "ma_cross":
         strat = MovingAverageCrossStrategy(short=20, long=60)
     elif strategy == "prediction":
-        model = GBDTModel(lookback=30)
+        model = GBDTModel()
         strat = PredictionStrategy(model, threshold_buy=0.015, threshold_sell=-0.015)
     elif strategy == "rolling_prediction":
-        model = GBDTModel(lookback=30)
+        model = GBDTModel()
         strat = RollingPredictionStrategy(
             model, warmup=warmup, retrain_freq=retrain_freq,
             threshold_buy=0.015, threshold_sell=-0.015,
@@ -614,6 +614,44 @@ def alert_settings(market, interval, start, end, trade_only, show):
         console.print(f"[green]设置已更新: {', '.join(changed)}[/green]")
     else:
         console.print("[yellow]使用 --show 查看当前设置[/yellow]")
+
+
+@cli.command()
+@click.option("--port", "-p", default=8080, help="服务端口")
+@click.option("--host", "-h", default="0.0.0.0", help="绑定地址")
+def bot(port, host):
+    """启动 Bot webhook 服务 (微信/飞书群组接收指令)"""
+    from src.bot.server import run_server
+    console.print(f"[bold green]启动 Bot Server[/bold green]  {host}:{port}")
+    console.print("  POST /pushplus/callback  — PushPlus 微信回调")
+    console.print("  POST /feishu/event       — 飞书事件回调")
+    console.print("  POST /api/dispatch       — 手动派发任务")
+    console.print("  GET  /api/tasks          — 查看任务列表")
+    console.print("")
+    console.print("[dim]支持的指令格式:")
+    console.print("[dim]  /pm review         — PM审查所有模块")
+    console.print("[dim]  /trader daily      — Trader每日报告")
+    console.print("[dim]  /analyze 603186    — Trader分析指定股票")
+    console.print("[dim]  /daily             — Trader每日报告(快捷)")
+    console.print("[dim]  /review            — PM审查(快捷)")
+    run_server(port=port, host=host)
+
+
+@cli.command()
+@click.argument("message")
+def dispatch(message):
+    """手动派发 agent 任务 (本地测试用)"""
+    from src.bot.dispatcher import parse_message, execute_task, format_reply
+    task = parse_message(message)
+    if not task:
+        console.print("[red]无法识别指令[/red]")
+        console.print("支持: /review /daily /analyze /pm <prompt> /trader <prompt>")
+        return
+    console.print(f"[blue]Agent: {task.agent}[/blue]  Command: {task.command[:80]}...")
+    console.print("[yellow]执行中...[/yellow]")
+    execute_task(task)
+    reply = format_reply(task)
+    console.print(reply)
 
 
 if __name__ == "__main__":

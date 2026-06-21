@@ -52,9 +52,8 @@ class PredictionStrategy(BaseStrategy):
         train_end = int(len(df) * 0.7)
         if train_end < 60:
             return
-        train = df.iloc[:train_end]
-        prices = train["Close"].values
-        self.model.train(prices)
+        train_df = df.iloc[:train_end]
+        self.model.train(train_df)
         forecast = self.model.predict(self.forecast_steps)
         for j in range(self.forecast_steps):
             self._forecasts[train_end + j] = forecast[j]
@@ -109,11 +108,11 @@ class RollingPredictionStrategy(BaseStrategy):
 
     def _retrain_and_forecast(self, df: pd.DataFrame, i: int):
         """用 data[:i] 训练, 预测 [i, i+forecast_steps) 并缓存"""
-        prices = df.iloc[:i]["Close"].values
-        if len(prices) < self.warmup:
+        train_df = df.iloc[:i]
+        if len(train_df) < self.warmup:
             return
         try:
-            self.model.train(prices)
+            self.model.train(train_df)
             preds = self.model.predict(self.forecast_steps)
             for j, p in enumerate(preds):
                 self._forecasts[i + j] = p

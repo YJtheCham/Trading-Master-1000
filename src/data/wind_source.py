@@ -23,7 +23,7 @@ def _call_wind(server: str, tool: str, params: dict) -> Optional[dict]:
         cmd = ["node", "scripts/cli.mjs", "call", server, tool,
                json.dumps(params, ensure_ascii=False)]
         r = subprocess.run(cmd, cwd=WIND_CLI_DIR, capture_output=True,
-                           text=True, timeout=15)
+                           text=True, timeout=30)
         data = json.loads(r.stdout)
         if data.get("isError"):
             return None
@@ -53,8 +53,8 @@ def get_kline(windcode: str, begin_date: str, end_date: str,
               indicators: str = "收盘价,开盘价,最高价,最低价,成交量") -> Optional[list]:
     """获取K线数据"""
     data = _call_wind("stock_data", "get_stock_kline",
-                      {"windcode": windcode, "beginDate": begin_date,
-                       "endDate": end_date, "indicators": indicators})
+                      {"windcode": windcode, "begin_date": begin_date,
+                       "end_date": end_date, "indicators": indicators})
     if not data or not data.get("rows"):
         return None
     cols = [c["name"] for c in data.get("columns", [])]
@@ -62,31 +62,29 @@ def get_kline(windcode: str, begin_date: str, end_date: str,
 
 
 def get_basic_info(windcode: str) -> Optional[dict]:
-    """获取行业分类"""
+    """获取基本信息（行业分类、公司概况等）"""
+    # 先用精准windcode查
     data = _call_wind("stock_data", "get_stock_basicinfo",
-                      {"windcode": windcode, "question": "行业分类"})
-    if not data:
-        return None
-    # 格式: data.data[0] 或 data.rows
-    inner = data.get("data", [data])
-    if isinstance(inner, list) and len(inner) > 0:
-        inner = inner[0]
-    rows = inner.get("rows", []) or data.get("rows", [])
-    cols = [c["name"] for c in inner.get("columns", []) or data.get("columns", [])]
-    if not rows or not cols:
-        return None
-    # 找匹配 windcode 的行
-    for row in rows:
-        if windcode in row:
-            return dict(zip(cols, row))
+                      {"windcode": windcode, "question": windcode})
+    if data:
+        inner = data.get("data", [data])
+        if isinstance(inner, list) and len(inner) > 0:
+            inner = inner[0]
+        rows = inner.get("rows", []) or data.get("rows", [])
+        cols = [c["name"] for c in inner.get("columns", []) or data.get("columns", [])]
+        if rows and cols:
+            for row in rows:
+                if windcode in str(row):
+                    return dict(zip(cols, row))
     return None
 
 
 def get_financial(windcode: str, report_date: str = "") -> Optional[dict]:
-    """获取财务数据"""
-    params = {"windcode": windcode,
-              "question": "最近一期净资产收益率、营业收入、净利润、资产负债率、毛利率"}
-    data = _call_wind("stock_data", "get_stock_financial", params)
+    """获取财务数据（通过 analytics_data 通用取数）"""
+    params = {
+        "question": f"{windcode} 最新一期 净资产收益率 营业收入 净利润 资产负债率 毛利率"
+    }
+    data = _call_wind("analytics_data", "get_financial_data", params)
     if not data:
         return None
     inner = data.get("data", [data])
@@ -97,28 +95,30 @@ def get_financial(windcode: str, report_date: str = "") -> Optional[dict]:
     if not rows or not cols:
         return None
     for row in rows:
-        if windcode in row:
+        if windcode in str(row):
             return dict(zip(cols, row))
     return dict(zip(cols, rows[0])) if rows else None
 
 
 def get_news(windcode: str, limit: int = 10) -> list[dict]:
-    """获取最新公告/新闻"""
+    """获取最新公告/新闻 (query参数不得含空格)"""
+    # query传纯代码, 不含空格
+    code = windcode.replace(".SH", "").replace(".SZ", "")
     data = _call_wind("financial_docs", "get_financial_news",
-                      {"query": f"{windcode} 最新", "limit": str(limit)})
+                      {"query": code, "top_k": str(limit)})
     if not data:
         return []
     inner = data.get("data", [data])
     if isinstance(inner, list) and len(inner) > 0:
         inner = inner[0]
-    rows = inner.get("rows", []) or data.get("rows", [])
-    cols = [c["name"] for c in inner.get("columns", []) or data.get("columns", [])]
+    items = inner.get("items", []) or data.get("items", [])
     news = []
-    for row in rows[:limit]:
-        item = dict(zip(cols, row)) if cols else {}
-        news.append({"title": item.get("标题", item.get("title", "")),
-                     "time": item.get("时间", item.get("time", "")),
-                     "source": item.get("来源", "")})
+    for item in items[:limit]:
+        content = item.get("content", "")
+        news.append({"title": content[:60] if content else "",
+                     "content": content,
+                     "time": item.get("time", ""),
+                     "source": item.get("source", "")})
     return news
 
 
@@ -163,16 +163,17 @@ def get_stock_full(windcode: str) -> dict:
     # 行业
     bi = get_basic_info(windcode)
     if bi:
-        full["industry"] = bi.get("所属WIND行业明细", bi.get("行业分类", ""))
+        full["industry"] = bi.get("WIND行业级别明细", bi.get("所属WIND行业明细", bi.get("行业分类", "")))
 
     # 财务
     fi = get_financial(windcode)
     if fi:
-        full["roe"] = fi.get("净资产收益率(ROE)", fi.get("净资产收益率", ""))
-        full["revenue"] = fi.get("营业收入", "")
-        full["net_profit"] = fi.get("净利润", "")
-        full["debt_ratio"] = fi.get("资产负债率", "")
-        full["gross_margin"] = fi.get("毛利率", "")
+        # analytics_data 返回带"最新一期"前缀
+        full["roe"] = fi.get("最新一期净资产收益率", fi.get("净资产收益率(ROE)", fi.get("净资产收益率", "")))
+        full["revenue"] = fi.get("最新一期营业收入", fi.get("营业收入", ""))
+        full["net_profit"] = fi.get("最新一期净利润", fi.get("净利润", ""))
+        full["debt_ratio"] = fi.get("最新一期资产负债率", fi.get("资产负债率", ""))
+        full["gross_margin"] = fi.get("最新一期销售毛利率", fi.get("毛利率", ""))
 
     # 新闻
     try:

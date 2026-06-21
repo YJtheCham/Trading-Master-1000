@@ -269,6 +269,14 @@ if "stock_names" not in st.session_state:
             key = f"{item.market}-{item.symbol}"
             st.session_state.stock_names[key] = item.name
 
+if "stock_groups" not in st.session_state:
+    st.session_state.stock_groups = {}
+    for k in st.session_state.watchlist:
+        st.session_state.stock_groups[k] = "默认"
+    for item in load_watchlist():
+        key = f"{item.market}-{item.symbol}"
+        st.session_state.stock_groups[key] = item.group or "默认"
+
 if "stock_order" not in st.session_state:
     st.session_state.stock_order = list(st.session_state.watchlist)
 

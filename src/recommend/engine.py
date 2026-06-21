@@ -15,6 +15,9 @@ class ModelResult:
     pct_change: float = 0.0
     mape: float = 0.0
     error: str = ""
+    data_source: str = ""
+    model_params: dict = field(default_factory=dict)
+    feature_names: list = field(default_factory=list)
 
 
 @dataclass
@@ -28,12 +31,13 @@ class StrategyResult:
     profit_factor: float = 0.0
     total_trades: int = 0
     error: str = ""
+    strategy_params: dict = field(default_factory=dict)
 
 
-def scan_predictions(df: pd.DataFrame, steps: int = 30) -> list[ModelResult]:
+def scan_predictions(df: pd.DataFrame, steps: int = 30, data_source: str = "") -> list[ModelResult]:
     """运行全部预测模型, 返回结果列表"""
     from src.models.factory import run_models
-    results = run_models(df, steps=steps)
+    results = run_models(df, steps=steps, data_source=data_source)
     output = []
     for name, r in results.items():
         mr = ModelResult(model=name)
@@ -45,6 +49,9 @@ def scan_predictions(df: pd.DataFrame, steps: int = 30) -> list[ModelResult]:
             mr.pct_change = (r.forecast[-1] - r.history[-1]) / r.history[-1] * 100
             mr.direction = "📈 看涨" if mr.pct_change > 0 else "📉 看跌"
             mr.mape = float(r.metrics.get("MAPE", 0))
+            mr.data_source = r.data_source
+            mr.model_params = r.model_params if isinstance(r.model_params, dict) else {}
+            mr.feature_names = list(r.feature_names) if r.feature_names else []
         output.append(mr)
     return output
 
@@ -69,16 +76,23 @@ def scan_strategies(df: pd.DataFrame, symbol: str, market: str, capital: float) 
         ("通道突破(20/10)", ChannelBreakoutStrategy(20, 10)),
         ("布林带(20/2)",   BollingerStrategy(20, 2)),
         ("滚动预测(月频)", RollingPredictionStrategy(
-            GBDTModel(lookback=30), warmup=200, retrain_freq=20,
+            GBDTModel(), warmup=200, retrain_freq=20,
             threshold_buy=0.015, threshold_sell=-0.015)),
         ("滚动预测(周频)", RollingPredictionStrategy(
-            GBDTModel(lookback=30), warmup=200, retrain_freq=5,
+            GBDTModel(), warmup=200, retrain_freq=5,
             threshold_buy=0.01, threshold_sell=-0.01)),
     ]
 
     output = []
     for name, strat in strategies:
         sr = StrategyResult(strategy=name)
+        # 捕获策略参数
+        try:
+            strat_params = {k: v for k, v in strat.__dict__.items() 
+                           if not k.startswith('_') and k != 'name'}
+            sr.strategy_params = strat_params
+        except Exception:
+            pass
         try:
             engine = BacktestEngine(df, strat, cfg)
             result = engine.run()

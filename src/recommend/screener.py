@@ -33,24 +33,33 @@ def screen_market(
     from src.data.stock_db import get_db, search_stocks
 
     db = get_db()
-    stock_list = symbols or [code for code, _ in db.all_stocks(market)[:300]]
+    if symbols:
+        stock_list = symbols
+    else:
+        stock_list = [code for code, _ in db.all_stocks(market)[:300]]
 
     hits = []
     for code in stock_list:
         try:
-            # 只扫100天, 速度快
-            df = fetch_data(code, market, period_days=120, use_cache=True)
+            detected_market = market
+            if code.startswith(("0", "3", "6")) and len(code) == 6:
+                detected_market = "A"
+            elif code.isdigit() and len(code) <= 5:
+                detected_market = "HK"
+            elif not code.isdigit():
+                detected_market = "US"
+            df = fetch_data(code, detected_market, period_days=120, use_cache=True)
             if df.empty or len(df) < 30:
                 continue
-            name = db.get_name(code, market) or code
-            rule = AlertRule(symbol=code, market=market, condition=condition, params=params)
+            name = db.get_name(code, detected_market) or code
+            rule = AlertRule(symbol=code, market=detected_market, condition=condition, params=params)
             triggered, msg, action = evaluate(rule, df)
             if triggered:
                 price = float(df["Close"].iloc[-1])
                 prev = float(df["Close"].iloc[-2])
                 direction = "📈" if price >= prev else "📉"
                 hits.append(ScreenerHit(
-                    symbol=code, name=name, market=market,
+                    symbol=code, name=name, market=detected_market,
                     current_price=price, direction=direction, message=msg,
                 ))
                 if len(hits) >= limit:

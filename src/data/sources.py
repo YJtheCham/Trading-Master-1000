@@ -321,6 +321,53 @@ class TushareSource(BaseSource):
 
 
 # ─── Mock 数据源 (最终回退) ────────────────────────────────
+
+
+# ─── Wind MCP (云端, 实时数据) ────────────────────────────
+class WindMCPSource(BaseSource):
+    """Wind MCP 云数据源 (无需 Wind 终端, 通过 Node CLI 调 API)"""
+    name = "Wind MCP"
+    priority = 0
+
+    def fetch_historical(self, symbol: str, period_days: int = 730,
+                         market: str = "") -> Optional[pd.DataFrame]:
+        from .wind_source import a_stock_to_windcode, get_kline
+        from datetime import datetime, timedelta
+        wc = a_stock_to_windcode(symbol)
+        end = datetime.now().strftime("%Y%m%d")
+        begin = (datetime.now() - timedelta(days=period_days)).strftime("%Y%m%d")
+        rows = get_kline(wc, begin, end, "收盘价,开盘价,最高价,最低价,成交量")
+        if not rows:
+            return None
+        df = pd.DataFrame(rows)
+        rename = {}
+        for c in df.columns:
+            cl = c.upper().strip()
+            if cl in ("MATCH", "CLOSE"): rename[c] = "Close"
+            elif cl in ("OPEN"): rename[c] = "Open"
+            elif cl in ("HIGH"): rename[c] = "High"
+            elif cl in ("LOW"): rename[c] = "Low"
+            elif cl in ("VOLUME"): rename[c] = "Volume"
+            elif cl in ("TURNOVER", "AMT", "AMOUNT"): rename[c] = "Amount"
+        # _DATE 优先, TIME 会在 rename 后 drop
+        date_col = next((c for c in df.columns if c.upper().strip() in ("_DATE", "TRADE_DATE")), None)
+        if not date_col:
+            date_col = next((c for c in df.columns if c.upper().strip() in ("TIME", "DATE")), None)
+        if date_col:
+            rename[date_col] = "Date"
+        df = df.rename(columns=rename)
+        # 删除多余的日期列
+        extras = [c for c in df.columns if c.upper().strip() in ("TIME", "_DATE", "TRADE_DATE") and c != "Date" and c in df.columns]
+        df = df.drop(columns=extras, errors="ignore")
+        if "Date" in df.columns:
+            df["Date"] = pd.to_datetime(df["Date"])
+        for col in ["Open", "Close", "High", "Low", "Volume", "Amount"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        return df.sort_values("Date").reset_index(drop=True)
+
+
+# ─── Mock 数据源 (最终回退) ────────────────────────────────
 class MockSource(BaseSource):
     name = "模拟数据"
     priority = 999
@@ -353,6 +400,8 @@ MARKET_SOURCES: dict[str, list[BaseSource]] = {
     "HK": [YahooSource(), HKEastMoneySource(), MockSource()],
     "US": [YahooSource(), USEastMoneySource(), MockSource()],
 }
+
+WIND_SOURCE = WindMCPSource()
 
 
 def get_sources(market: str) -> list[BaseSource]:

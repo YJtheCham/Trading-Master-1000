@@ -49,11 +49,12 @@ class TokenBucket:
 # ─── 各数据源限流配置 ─────────────────────────────────────
 # rates: 每秒允许的请求数
 SOURCE_LIMITS = {
-    "东方财富": TokenBucket(rate=3, capacity=10),    # 东方财富: 3次/秒
-    "新浪财经": TokenBucket(rate=5, capacity=20),    # 新浪: 5次/秒
-    "Yahoo Finance": TokenBucket(rate=1, capacity=5), # Yahoo: 1次/秒 (严格)
-    "Tushare": TokenBucket(rate=3, capacity=10),     # Tushare: 3次/秒
-    "模拟数据": TokenBucket(rate=100, capacity=100), # Mock: 不限
+    "东方财富": TokenBucket(rate=3, capacity=10),
+    "新浪财经": TokenBucket(rate=5, capacity=20),
+    "Yahoo Finance": TokenBucket(rate=1, capacity=5),
+    "Tushare": TokenBucket(rate=3, capacity=10),
+    "Wind MCP": TokenBucket(rate=1, capacity=3),
+    "模拟数据": TokenBucket(rate=100, capacity=100),
     "港股-东方财富": TokenBucket(rate=3, capacity=10),
     "东方财富(美股)": TokenBucket(rate=3, capacity=10),
     "default": TokenBucket(rate=2, capacity=10),

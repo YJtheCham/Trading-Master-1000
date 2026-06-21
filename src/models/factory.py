@@ -46,7 +46,7 @@ def list_models() -> list[str]:
 
 
 def run_models(df: pd.DataFrame, model_names: list[str] | None = None,
-               steps: int = 30) -> dict[str, PredictionResult]:
+               steps: int = 30, data_source: str = "") -> dict[str, PredictionResult]:
     _init_registry()
     if model_names is None:
         model_names = list(MODEL_REGISTRY.keys())
@@ -57,6 +57,7 @@ def run_models(df: pd.DataFrame, model_names: list[str] | None = None,
         if cls is None:
             continue
         model = cls()
+        model._data_source = data_source
         try:
             results[name] = model.run(df, steps=steps)
         except Exception as e:
@@ -67,5 +68,6 @@ def run_models(df: pd.DataFrame, model_names: list[str] | None = None,
                 dates=[],
                 forecast_dates=[],
                 metrics={"error": str(e)},
+                data_source=data_source,
             )
     return results

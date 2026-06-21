@@ -10,7 +10,10 @@ def var(returns: np.ndarray, confidence: float = 0.95) -> float:
 def cvar(returns: np.ndarray, confidence: float = 0.95) -> float:
     """Conditional VaR (Expected Shortfall)"""
     threshold = np.percentile(returns, (1 - confidence) * 100)
-    return float(returns[returns <= threshold].mean())
+    tail = returns[returns <= threshold]
+    if len(tail) == 0:
+        return float(threshold)
+    return float(tail.mean())
 
 
 def sharpe_ratio(returns: np.ndarray, rf: float = 0.02, periods: int = 252) -> float:

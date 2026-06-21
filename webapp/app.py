@@ -26,7 +26,7 @@ from src.data.tooltips import MODEL_TIPS, RISK_TIPS, STRATEGY_TIPS, CONDITION_TI
 from src.data.fetcher import (
     fetch_data, get_realtime_price, diagnose_sources,
 )
-from src.utils.config import get_tushare_token, save_config, load_config
+from src.utils.config import get_tushare_token, save_config, load_config, DATA_DIR
 from src.data.sources import MockSource
 
 st.set_page_config(page_title="StockPredict", layout="wide", page_icon="📈")
@@ -223,8 +223,9 @@ def refresh_sources():
 
 
 # ─── 数据获取: 真实 → Mock回退 ──────────────────────────
-@st.cache_data(ttl=60)
-def get_data_for(symbol: str, market: str, period_days: int = 500) -> pd.DataFrame:
+@st.cache_data(ttl=60, max_entries=32)
+def get_data_for(symbol: str, market: str, period_days: int = 500,
+                 _refresh_key: int = 0) -> pd.DataFrame:
     try:
         df = fetch_data(symbol, market, period_days=period_days)
         return df
@@ -232,13 +233,12 @@ def get_data_for(symbol: str, market: str, period_days: int = 500) -> pd.DataFra
         return _mock_data(symbol, market)
 
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300, max_entries=64)
 def _detect_source_name(symbol: str, market: str) -> str:
-    """检测数据来源 (无st调用, 可缓存)"""
     from src.data.sources import get_sources
     for s in get_sources(market):
         try:
-            r = s.run_historical(symbol, period_days=3, market=market)
+            r = s.run_historical(symbol, period_days=5, market=market)
             if r.success:
                 return s.name
         except Exception:
@@ -364,7 +364,9 @@ def _remove_from_watchlist(key: str):
     st.session_state.watchlist.discard(key)
     st.session_state.stock_names.pop(key, None)
     st.session_state.stock_groups.pop(key, None)
+    st.session_state.stock_order = [k for k in st.session_state.stock_order if k != key]
     _persist_watchlist()
+    _save_stock_order()
 
 def _persist_watchlist():
     from src.data.fetcher import save_watchlist
@@ -393,6 +395,7 @@ with st.sidebar:
 
     if st.button("🔄 刷新数据源", use_container_width=True):
         refresh_sources()
+        st.session_state.dash_refresh_queue = list(st.session_state.watchlist)
         st.rerun()
     with st.expander("📡 数据源", expanded=False):
         tushare_ok = bool(get_tushare_token())
@@ -503,6 +506,10 @@ with st.sidebar:
                     st.session_state.selected_stock = key
                     st.session_state.page = "ℹ️ 自选详情"
                     st.rerun()
+            with c2:
+                if st.button("✕", key=f"del_{key}", help="删除"):
+                    _remove_from_watchlist(key)
+                    st.rerun()
             with c3:
                 if idx > 0:
                     if st.button("⬆", key=f"up_{key}", help="上移"):
@@ -514,10 +521,6 @@ with st.sidebar:
                     if st.button("⬇", key=f"dn_{key}", help="下移"):
                         st.session_state.stock_order.remove(key)
                         st.session_state.stock_order.insert(idx + 1, key)
-                        st.rerun()
-                with c2:
-                    if st.button("✕", key=f"del_{key}", help="删除"):
-                        _remove_from_watchlist(key)
                         st.rerun()
     else:
         st.caption("暂无自选股, 上方搜索添加")
@@ -574,16 +577,6 @@ with st.sidebar:
     with st.expander("💬 微信推送 (PushPlus)", expanded=False):
         from src.utils.config import get_pushplus_token
         ppt = get_pushplus_token()
-        if ppt: st.caption("✅ 已配置")
-        pk = st.text_input("Token", value=ppt or "",
-                           placeholder="从 pushplus.plus 获取",
-                           type="password",                            key="ppt_tok", label_visibility="collapsed")
-        if st.button("💾 保存", key="pushplus_save_btn", use_container_width=True):
-            cfg = load_config(); cfg["pushplus_token"] = pk; save_config(cfg); st.rerun()
-
-    with st.expander("💬 微信推送 (PushPlus)", expanded=False):
-        from src.utils.config import get_pushplus_token
-        ppt = get_pushplus_token()
         if ppt: st.caption("✅ 已配置 (去 pushplus.plus 获取 Token)")
         pt = st.text_input("Token", value=ppt or "",
                            placeholder="xxxxx...", type="password",
@@ -636,7 +629,9 @@ def fmt_risk(k: str, v: float) -> str:
         return f"{v*100:.1f}%"
     if "VaR" in k or "CVaR" in k:
         return f"{v*100:.2f}%"
-    return str(v)
+    if k == "SharpeRatio":
+        return f"{v:.2f}"
+    return f"{v:.4f}"
 
 # ═══════════════════════════════════════════════════════════
 #  📊 仪表盘
@@ -662,89 +657,126 @@ if page == "🏠 仪表盘":
     if not ordered:
         st.info(f"分组「{ag}」中暂无股票")
         st.stop()
-    COLS_PER_ROW = 4  # desktop default (overridden by CSS for mobile)
 
-    # 拖拽排序模式
-    if st.checkbox("✋ 拖拽排序", False, key="sort_toggle_2"):
-        from src.components.sortable_cards import sortable_cards
-        cd = []
-        for k in ordered:
-            info = info_for(k)
-            try:
-                from src.data.fetcher import fetch_data
-                df = fetch_data(info["symbol"], info["market"], use_cache=True, max_age_minutes=5)
-                if df is not None and not df.empty:
-                    lt = df.iloc[-1]; pv = df.iloc[-2]
-                    chg = (lt["Close"] - pv["Close"]) / pv["Close"] * 100
-                    cd.append({"key": k, "name": info["name"], "price": f"{lt['Close']:.2f}", "change": chg, "dark": st.session_state.dark_mode})
-            except:
-                cd.append({"key": k, "name": info["name"], "price": "-", "change": 0, "dark": st.session_state.dark_mode})
-        new_order = sortable_cards(cd, height=600)
-        if new_order:
-            st.session_state.stock_order = [k for k in new_order if k in st.session_state.watchlist]
+    # 刷新触发: 并发刷新所有股票, 清 Streamlit 缓存
+    if st.button("🔄 刷新数据", key="refresh_dash_btn", use_container_width=False):
+        st.session_state.refresh_key = st.session_state.get("refresh_key", 0) + 1
+        get_data_for.clear()
+        _detect_source_name.clear()
+        with st.spinner("正在刷新数据..."):
+            import concurrent.futures
+            def _refresh_one(key):
+                info = info_for(key)
+                try:
+                    fetch_data(info["symbol"], info["market"], use_cache=False)
+                    return (key, True)
+                except Exception:
+                    return (key, False)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                futs = {pool.submit(_refresh_one, k): k for k in ordered}
+                for fut in concurrent.futures.as_completed(futs, timeout=120):
+                    pass
+        st.rerun()
+
+    # ── 可拖拽 + 可点击 + 可分组卡片仪表盘 ──
+    from src.components.sortable_cards import dash_cards
+    from src.alerts.engine import load_rules
+    alert_rules = load_rules()
+    monitored_symbols = set(
+        f"{r.market}-{r.symbol}" for r in alert_rules if r.enabled
+    )
+
+    all_groups = sorted(set(st.session_state.stock_groups.values()))
+    cards = []
+    for key in ordered:
+        info = info_for(key)
+        try:
+            df = fetch_data(info["symbol"], info["market"], use_cache=True)
+        except Exception:
+            df = _mock_data(info["symbol"], info["market"])
+        if df is None or df.empty:
+            continue
+        latest = df.iloc[-1]
+        prev = df.iloc[-2]
+        change = (latest["Close"] - prev["Close"]) / prev["Close"] * 100
+        data_date = latest["Date"]
+        if hasattr(data_date, "date"):
+            data_date = data_date.date()
+        today = datetime.now().date()
+        
+        # 更健壮的日期显示 - 添加严格检查
+        try:
+            if data_date == today:
+                date_label = "📡 今日"
+            elif hasattr(data_date, "strftime"):
+                # 检查是否是合理的日期（不是01/01）
+                month = data_date.month
+                day = data_date.day
+                if month == 1 and day == 1:
+                    date_label = "📅 01/01 (异常日期)"
+                else:
+                    date_label = f"📅 {data_date.strftime('%m/%d')}收盘价"
+            else:
+                date_label = f"📅 {data_date}收盘价"
+        except Exception:
+            date_label = "📅 未知日期"
+        cards.append({
+            "key": key, "name": info["name"],
+            "price": f"{latest['Close']:.2f}", "change": round(change, 2),
+            "date_label": date_label, "dark": st.session_state.dark_mode,
+            "group": st.session_state.stock_groups.get(key, "默认"),
+            "monitored": key in monitored_symbols,
+        })
+
+    # 被监控的卡片自动置顶
+    cards.sort(key=lambda c: (not c["monitored"], ordered.index(c["key"]) if c["key"] in ordered else 99))
+
+    result = dash_cards(cards, groups=all_groups,
+                        height=max(400, len(cards) * 100 // 4 + 100))
+    if result:
+        if result["action"] == "click":
+            st.session_state.selected_stock = result["key"]
+            st.session_state.page = "ℹ️ 自选详情"
+            st.rerun()
+        elif result["action"] == "reorder":
+            st.session_state.stock_order = [k for k in result["keys"]
+                                            if k in st.session_state.watchlist]
             _save_stock_order()
             st.rerun()
-        st.stop()
+        elif result["action"] == "group":
+            key, grp = result["key"], result["group"]
+            st.session_state.stock_groups[key] = grp
+            _persist_watchlist()
+            st.toast(f"✅ {info_for(key)['name']} → {grp}", icon="📂")
+            st.rerun()
+        elif result["action"] == "new_group":
+            key, name = result.get("key"), result["name"]
+            if key and name:
+                st.session_state.stock_groups[key] = name
+            _persist_watchlist()
+            st.toast(f"✅ 新分组「{result['name']}」已创建", icon="📂")
+            st.rerun()
 
-    for i in range(0, len(ordered), COLS_PER_ROW):
-        row_stocks = ordered[i:i + COLS_PER_ROW]
-        cols = st.columns(COLS_PER_ROW)
-        for col, key in zip(cols, row_stocks):
-            info = info_for(key)
-            # 直读缓存, 不走 st.cache_data (每个卡片独立刷新)
-            from src.data.fetcher import fetch_data, _cache_path
+    with st.expander("📈 自选股走势图", expanded=False):
+        tab_names = [info_for(k)["name"] for k in sorted(st.session_state.watchlist)]
+        tabs = st.tabs(tab_names)
+        for tab, key in zip(tabs, sorted(st.session_state.watchlist)):
+            with tab:
+                info = info_for(key)
+                try:
+                    df = fetch_data(info["symbol"], info["market"], use_cache=True)
+                except Exception:
+                    df = _mock_data(info["symbol"], info["market"])
+                from src.data.charting import kline_chart
+                fig = kline_chart(df, title=info["name"], indicators=["ma"], height=300,
+                                  template=plotly_template())
+                st.plotly_chart(fig, use_container_width=True)
 
-            # 先查缓存新鲜度, 再拉数据 (避免 fetch_data 更新缓存后永远是📡)
-            cp = _cache_path(info["symbol"], info["market"])
-            fresh = True
-            ts = ""
-            if Path(cp).exists():
-                age_min = (datetime.now() - datetime.fromtimestamp(Path(cp).stat().st_mtime)).total_seconds() / 60
-                fresh = age_min < 3  # 3分钟内算新鲜
-                if not fresh:
-                    ts = datetime.fromtimestamp(Path(cp).stat().st_mtime).strftime("%m-%d %H:%M")
-
-            try:
-                df = fetch_data(info["symbol"], info["market"], use_cache=True, max_age_minutes=5)
-            except Exception:
-                df = _mock_data(info["symbol"], info["market"])
-            if df is None or df.empty:
-                continue
-            latest = df.iloc[-1]
-            prev = df.iloc[-2]
-            change = (latest["Close"] - prev["Close"]) / prev["Close"] * 100
-
-            name_display = f"{'📡 ' if fresh else ''}{info['name']} ({info['market']})"
-            ts_text = f"⏱{ts}" if ts else ""
-
-            with col:
-                st.metric(name_display,
-                          f"{latest['Close']:.2f}", f"{change:+.2f}%",
-                          delta_color="normal" if change >= 0 else "inverse")
-                if ts_text:
-                    st.caption(ts_text)
-                if st.button("→ 详情", key=f"dash_{key}", use_container_width=True):
-                    st.session_state.selected_stock = key
-                    st.session_state.page = "ℹ️ 自选详情"
-                    st.rerun()
-
-    st.divider()
-    tab_names = [info_for(k)["name"] for k in sorted(st.session_state.watchlist)]
-    tabs = st.tabs(tab_names)
-    for tab, key in zip(tabs, sorted(st.session_state.watchlist)):
-        with tab:
-            info = info_for(key)
-            df = get_data_notify(info["symbol"], info["market"], info["name"])
-            from src.data.charting import kline_chart
-            fig = kline_chart(df, title=info["name"], indicators=["ma"], height=300,
-                              template=plotly_template())
-            st.plotly_chart(fig, use_container_width=True)
-
-            with st.expander("📊 风控 & 详细指标"):
-                risk = calc_all_risk_metrics(df)
-                cols2 = st.columns(5)
-                for col2, (k, v) in zip(cols2, risk.items()):
-                    col2.metric(k, fmt_risk(k, v), help=RISK_TIPS.get(k, ""))
+                with st.expander("📊 风控 & 详细指标"):
+                    risk = calc_all_risk_metrics(df)
+                    cols2 = st.columns(5)
+                    for col2, (k, v) in zip(cols2, risk.items()):
+                        col2.metric(k, fmt_risk(k, v), help=RISK_TIPS.get(k, ""))
 
 # ═══════════════════════════════════════════════════════════
 #  🔮 预测
@@ -752,7 +784,7 @@ if page == "🏠 仪表盘":
 elif page == "📡 预测":
     st.title("📡 股价预测")
 
-    tab_new, tab_hist, tab_batch = st.tabs(["🔮 新预测", "📜 历史记录", "📊 批量历史"])
+    tab_new, tab_hist, tab_batch, tab_opt = st.tabs(["🔮 新预测", "📜 历史记录", "📊 批量历史", "⚙️ 模型优化"])
 
     # ══════════════════════════════════════════════════════
     #  新预测
@@ -816,7 +848,8 @@ elif page == "📡 预测":
                 info = info_for(tkey)
                 df = get_data_notify(info["symbol"], info["market"], info["name"])
                 with st.spinner(f"{tidx+1}/{len(targets)} {info['symbol']} {info['name']}..."):
-                    results = run_models(df, model_names=models_sel, steps=steps)
+                    source = _detect_source_name(info["symbol"], info["market"])
+                    results = run_models(df, model_names=models_sel, steps=steps, data_source=source)
 
                 from src.data.pred_history import add_prediction
                 for name, r in results.items():
@@ -825,7 +858,9 @@ elif page == "📡 预测":
                     if isinstance(mape_val, str): mape_val = 0
                     add_prediction(info["symbol"], info["market"], info["name"],
                                    name, r.forecast, r.forecast_dates,
-                                   float(r.history[-1]), float(mape_val))
+                                   float(r.history[-1]), float(mape_val),
+                                   data_source=r.data_source,
+                                   model_params=r.model_params)
 
                 valid = [(name, r) for name, r in results.items() if len(r.forecast) > 0]
                 if len(targets) == 1:
@@ -839,8 +874,26 @@ elif page == "📡 预测":
                             direction = "📈涨" if r.forecast[-1] > r.history[-1] else "📉跌"
                             rows.append({"模型": name, "MAE": m.get("MAE","-"), "方向": direction,
                                          "预测末价": f"{r.forecast[-1]:.2f}"})
-                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-                if valid:
+                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                with st.expander("🔧 模型参数详情", expanded=False):
+                    for name, r in results.items():
+                        if len(r.forecast):
+                            st.caption(f"**{name}**")
+                            c1, c2, c3 = st.columns(3)
+                            with c1:
+                                ds = r.data_source or "—"
+                                st.write("📡 数据源:", ds)
+                            with c2:
+                                params = r.model_params.get("params", {}) if isinstance(r.model_params, dict) else {}
+                                param_str = ", ".join(f"{k}={v}" for k, v in params.items()) if params else "默认"
+                                st.write("⚙️ 参数:", param_str)
+                            with c3:
+                                feats = r.feature_names if r.feature_names else r.model_params.get("features", []) if isinstance(r.model_params, dict) else []
+                                st.write(f"📊 因子: {len(feats)}个" if feats else "📊 因子: —")
+                                if feats:
+                                    with st.expander(f"查看因子 ({len(feats)})", expanded=False):
+                                        st.caption(", ".join(str(f) for f in feats))
+            if valid:
                     up = sum(1 for _, r in valid if r.forecast[-1] > r.history[-1])
                     prices = [r.forecast[-1] for _, r in valid]
                     avg_pct = np.mean([(r.forecast[-1]-r.history[-1])/r.history[-1]*100 for _, r in valid])
@@ -931,6 +984,22 @@ elif page == "📡 预测":
                             if not dd.empty:
                                 dd.insert(0, "天数", [f"第{i+1}天" for i in range(len(dd))])
                                 st.dataframe(dd, use_container_width=True, hide_index=True)
+                            with st.expander("🔧 模型参数详情", expanded=False):
+                                for n, r in results.items():
+                                    if len(r.forecast):
+                                        st.caption(f"**{n}**")
+                                        c1, c2, c3 = st.columns(3)
+                                        with c1:
+                                            st.write("数据源:", r.data_source or "—")
+                                        with c2:
+                                            params = r.model_params.get("params", {}) if isinstance(r.model_params, dict) else {}
+                                            st.write("参数:", ", ".join(f"{k}={v}" for k, v in params.items()) if params else "默认")
+                                        with c3:
+                                            feats = r.feature_names if r.feature_names else r.model_params.get("features", []) if isinstance(r.model_params, dict) else []
+                                            st.write(f"因子数: {len(feats)}")
+                                            if feats:
+                                                with st.expander(f"查看因子列表 ({len(feats)}个)", expanded=False):
+                                                    st.caption(", ".join(str(f) for f in feats))
                             if st.button("✕ 收起", key=f"bt_close_det_{detail_key}"):
                                 st.session_state.batch_detail = None
                                 st.rerun()
@@ -951,43 +1020,55 @@ elif page == "📡 预测":
         from src.data.pred_history import load_history, PredictionRecord
 
         history = load_history()
-        if not history:
-            st.info("暂无预测历史, 先做一个预测吧")
-            st.stop()
+        if history:
+            for h in reversed(history):
+                with st.expander(f"{h.predicted_at} | [{h.market}] {h.symbol} {h.stock_name} — {h.model} "
+                                 f"预测{h.steps}天 → 末价{h.final_prediction:.2f} ({h.final_pct:+.1f}%)"):
+                    detail = pd.DataFrame({
+                        "天数": [f"第{i+1}天" for i in range(h.steps)],
+                        "预测价": h.forecast,
+                        "日期": [d.split('-')[1] + '/' + d.split('-')[2] if len(d.split('-')) == 3 else d 
+                                for d in h.forecast_dates] if len(h.forecast_dates) == h.steps
+                                else [""] * h.steps,
+                    })
+                    detail["预测价"] = detail["预测价"].round(2)
+                    st.dataframe(detail, use_container_width=True, hide_index=True)
 
-        for h in reversed(history):
-            with st.expander(f"{h.predicted_at} | [{h.market}] {h.symbol} {h.stock_name} — {h.model} "
-                             f"预测{h.steps}天 → 末价{h.final_prediction:.2f} ({h.final_pct:+.1f}%)"):
-                # 详情表格
-                detail = pd.DataFrame({
-                    "天数": [f"第{i+1}天" for i in range(h.steps)],
-                    "预测价": h.forecast,
-                    "日期": h.forecast_dates if len(h.forecast_dates) == h.steps
-                           else [""] * h.steps,
-                })
-                detail["预测价"] = detail["预测价"].round(2)
-                st.dataframe(detail, use_container_width=True, hide_index=True)
+                    if h.data_source or h.model_params:
+                        with st.expander("🔧 模型参数", expanded=False):
+                            if h.data_source:
+                                st.write("📡 数据源:", h.data_source)
+                            if h.model_params:
+                                params = h.model_params.get("params", {})
+                                if params:
+                                    param_str = ", ".join(f"{k}={v}" for k, v in params.items())
+                                    st.write("⚙️ 参数:", param_str)
 
-                c1, c2 = st.columns([1, 5])
-                with c1:
-                    if st.button("🔄 一键重测", key=f"retest_{h.id}",
-                                 use_container_width=True, type="primary"):
-                        df = get_data_for(h.symbol, h.market, h.model)
-                        with st.spinner(f"重测 {h.stock_name} {h.model}..."):
-                            from src.models.factory import run_models
-                            from src.data.pred_history import add_prediction
-                            results = run_models(df, model_names=[h.model], steps=h.steps)
-                            if h.model in results and len(results[h.model].forecast) > 0:
-                                r = results[h.model]
-                                mape_val = r.metrics.get("MAPE", 0)
-                                if isinstance(mape_val, str):
-                                    mape_val = 0
-                                add_prediction(h.symbol, h.market, h.stock_name,
-                                               h.model, r.forecast, r.forecast_dates,
-                                               float(r.history[-1]), float(mape_val))
-                                st.success(f"重测完成: 末价{r.forecast[-1]:.2f} "
-                                           f"({(r.forecast[-1]-r.history[-1])/r.history[-1]*100:+.1f}%)")
-                                st.rerun()
+                    c1, c2 = st.columns([1, 5])
+                    with c1:
+                        if st.button("🔄 一键重测", key=f"retest_{h.id}",
+                                     use_container_width=True, type="primary"):
+                            df = get_data_for(h.symbol, h.market)
+                            with st.spinner(f"重测 {h.stock_name} {h.model}..."):
+                                from src.models.factory import run_models
+                                from src.data.pred_history import add_prediction
+                                source = _detect_source_name(h.symbol, h.market)
+                                results = run_models(df, model_names=[h.model], steps=h.steps, data_source=source)
+                                if h.model in results and len(results[h.model].forecast) > 0:
+                                    r = results[h.model]
+                                    mape_val = r.metrics.get("MAPE", 0)
+                                    if isinstance(mape_val, str):
+                                        mape_val = 0
+                                    add_prediction(h.symbol, h.market, h.stock_name,
+                                                   h.model, r.forecast, r.forecast_dates,
+                                                   float(r.history[-1]), float(mape_val),
+                                                   data_source=r.data_source,
+                                                   model_params=r.model_params)
+                                    st.success(f"重测完成: 末价{r.forecast[-1]:.2f} "
+                                                f"({(r.forecast[-1]-r.history[-1])/r.history[-1]*100:+.1f}%)")
+                                    st.rerun()
+                    with c2:
+                        pass
 
     with tab_batch:
         from src.data.batch_history import load_batch_history
@@ -1042,6 +1123,251 @@ elif page == "📡 预测":
                                     st.rerun()
                                 break
 
+    # ═══════════════════════════════════════════════════════════
+    #  模型优化 (交叉验证 + 超参数优化)
+    # ═══════════════════════════════════════════════════════════
+    with tab_opt:
+        opt_mode = st.radio("优化模式", ["🔬 交叉验证", "🎯 超参数优化", "📂 缓存查看"], 
+                            horizontal=True, key="opt_mode")
+        
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            keys = st.session_state.watchlist or list(PRESET_STOCKS.keys())
+            target = st.selectbox("股票", keys,
+                                  format_func=lambda x: f"{info_for(x)['symbol']} {info_for(x)['name']}",
+                                  key="opt_target")
+        
+        info = info_for(target)
+        df = get_data_for(info["symbol"], info["market"], period_days=500)
+        
+        if opt_mode == "🔬 交叉验证":
+            with col2:
+                st.subheader("🔬 交叉验证")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    model_name = st.selectbox("模型", ["gbdt", "xgboost", "lstm", "transformer"], key="cv_model")
+                with c2:
+                    n_splits = st.slider("折数", 3, 10, 5, 1, key="cv_splits")
+                with c3:
+                    use_cache_cv = st.checkbox("使用缓存", value=True, key="cv_cache")
+            
+            if st.button("▶ 开始交叉验证", type="primary", use_container_width=True):
+                from src.models import MODEL_REGISTRY
+                from src.models.factory import list_models
+                
+                model_cls = MODEL_REGISTRY.get(model_name)
+                if model_cls:
+                    model = model_cls()
+                    with st.spinner(f"正在执行 {n_splits} 折交叉验证..."):
+                        result = model.cross_validate(df, n_splits=n_splits, use_cache=use_cache_cv)
+                    
+                    st.success("交叉验证完成！")
+                    
+                    metrics_df = pd.DataFrame({
+                        "指标": ["MAE", "RMSE", "MAPE", "方向准确率"],
+                        "平均值": [
+                            result.avg_metrics.get("MAE", 0),
+                            result.avg_metrics.get("RMSE", 0),
+                            result.avg_metrics.get("MAPE", 0),
+                            result.avg_metrics.get("Direction_Accuracy", 0)
+                        ],
+                        "标准差": [
+                            result.std_metrics.get("MAE", 0),
+                            result.std_metrics.get("RMSE", 0),
+                            result.std_metrics.get("MAPE", 0),
+                            result.std_metrics.get("Direction_Accuracy", 0)
+                        ]
+                    })
+                    metrics_df["平均值"] = metrics_df["平均值"].round(4)
+                    metrics_df["标准差"] = metrics_df["标准差"].round(4)
+                    
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.dataframe(metrics_df, use_container_width=True, hide_index=True)
+                    
+                    with col_b:
+                        fold_data = []
+                        for i, m in enumerate(result.fold_metrics):
+                            fold_data.append({
+                                "折数": f"Fold {i+1}",
+                                "MAE": m["MAE"],
+                                "RMSE": m["RMSE"],
+                                "MAPE": m["MAPE"],
+                                "方向准确率": m["Direction_Accuracy"]
+                            })
+                        fold_df = pd.DataFrame(fold_data)
+                        st.dataframe(fold_df, use_container_width=True, hide_index=True)
+                    
+                    # 可视化各折性能
+                    import plotly.graph_objects as go
+                    from plotly.subplots import make_subplots
+                    
+                    fig = make_subplots(rows=2, cols=2, 
+                                      subplot_titles=("各折 MAE", "各折 RMSE", "各折 MAPE", "各折 方向准确率"))
+                    
+                    folds = [f"Fold {i+1}" for i in range(n_splits)]
+                    fig.add_trace(go.Bar(x=folds, y=[m["MAE"] for m in result.fold_metrics], 
+                                        name="MAE", marker_color="steelblue"), row=1, col=1)
+                    fig.add_trace(go.Bar(x=folds, y=[m["RMSE"] for m in result.fold_metrics], 
+                                        name="RMSE", marker_color="orange"), row=1, col=2)
+                    fig.add_trace(go.Bar(x=folds, y=[m["MAPE"] for m in result.fold_metrics], 
+                                        name="MAPE", marker_color="green"), row=2, col=1)
+                    fig.add_trace(go.Bar(x=folds, y=[m["Direction_Accuracy"] for m in result.fold_metrics], 
+                                        name="方向准确率", marker_color="purple"), row=2, col=2)
+                    
+                    fig.update_layout(height=500, showlegend=False, 
+                                    template="plotly_dark" if st.session_state.dark_mode else "plotly_white")
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        elif opt_mode == "🎯 超参数优化":
+            with col2:
+                st.subheader("🎯 超参数优化")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    model_name = st.selectbox("模型", ["gbdt", "xgboost", "lstm", "transformer"], key="hpo_model")
+                with c2:
+                    n_trials = st.slider("试验次数", 10, 100, 50, 10, key="hpo_trials")
+                with c3:
+                    metric = st.selectbox("优化指标", ["rmse", "mae", "mape"], key="hpo_metric")
+            
+            if st.button("▶ 开始优化", type="primary", use_container_width=True):
+                from src.models.optimization import get_tuner
+                
+                with st.spinner(f"正在优化 {model_name}（{n_trials}次试验）..."):
+                    tuner = get_tuner(model_name, n_trials=n_trials, metric=metric, n_splits=3)
+                    result = tuner.tune(df)
+                
+                st.success(f"优化完成！最佳{metric.upper()}: {result.best_score:.4f}")
+                
+                # 最佳参数
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    st.subheader("🏆 最佳参数")
+                    params_df = pd.DataFrame({
+                        "参数": list(result.best_params.keys()),
+                        "值": [f"{v:.4f}" if isinstance(v, float) else str(v) 
+                               for v in result.best_params.values()]
+                    })
+                    st.dataframe(params_df, use_container_width=True, hide_index=True)
+                
+                with col_b:
+                    st.subheader("📊 优化统计")
+                    stats_df = pd.DataFrame({
+                        "指标": ["试验次数", "最佳分数", "优化时间(秒)", "最佳试验编号"],
+                        "值": [result.n_trials, f"{result.best_score:.4f}", 
+                               f"{result.optimization_time:.2f}", result.best_trial]
+                    })
+                    st.dataframe(stats_df, use_container_width=True, hide_index=True)
+                
+                # 可视化优化过程
+                if result.all_trials:
+                    import plotly.graph_objects as go
+                    
+                    trials_data = pd.DataFrame(result.all_trials)
+                    trials_data["trial"] = trials_data["trial"] + 1
+                    
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(
+                        x=trials_data["trial"],
+                        y=trials_data["score"],
+                        mode="lines+markers",
+                        name="分数",
+                        line=dict(color="steelblue", width=2),
+                        marker=dict(size=6)
+                    ))
+                    
+                    fig.add_trace(go.Scatter(
+                        x=[result.best_trial + 1],
+                        y=[result.best_score],
+                        mode="markers",
+                        name="最佳",
+                        marker=dict(color="red", size=15, symbol="star")
+                    ))
+                    
+                    fig.update_layout(
+                        title="超参数优化过程",
+                        xaxis_title="试验次数",
+                        yaxis_title=metric.upper(),
+                        template="plotly_dark" if st.session_state.dark_mode else "plotly_white",
+                        hovermode="x unified"
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+        
+        elif opt_mode == "📂 缓存查看":
+            with col2:
+                st.subheader("📂 缓存管理")
+                
+                # 交叉验证缓存
+                st.write("**交叉验证缓存**")
+                cv_cache_dir = Path("data/cache/cv")
+                if cv_cache_dir.exists():
+                    cv_files = list(cv_cache_dir.glob("*.pkl"))
+                    if cv_files:
+                        cv_data = []
+                        for f in cv_files:
+                            import pickle
+                            try:
+                                with open(f, "rb") as file:
+                                    cvr = pickle.load(file)
+                                cv_data.append({
+                                    "模型": cvr.model_name,
+                                    "折数": cvr.n_splits,
+                                    "平均MAE": cvr.avg_metrics.get("MAE", 0),
+                                    "文件": f.name
+                                })
+                            except:
+                                pass
+                        
+                        if cv_data:
+                            cv_df = pd.DataFrame(cv_data)
+                            st.dataframe(cv_df, use_container_width=True, hide_index=True)
+                            
+                            if st.button("🗑️ 清空CV缓存", key="clear_cv"):
+                                for f in cv_files:
+                                    f.unlink()
+                                st.rerun()
+                    else:
+                        st.info("暂无CV缓存")
+                else:
+                    st.info("暂无CV缓存")
+                
+                st.divider()
+                
+                # HPO缓存
+                st.write("**超参数优化缓存**")
+                hpo_cache_dir = Path("data/cache/tuning")
+                if hpo_cache_dir.exists():
+                    hpo_files = list(hpo_cache_dir.glob("*.json"))
+                    if hpo_files:
+                        hpo_data = []
+                        for f in hpo_files:
+                            try:
+                                import json
+                                with open(f) as file:
+                                    data = json.load(file)
+                                hpo_data.append({
+                                    "模型": f.stem.split("_")[0],
+                                    "指标": data.get("metric_name", "rmse"),
+                                    "最佳分数": data.get("best_score", 0),
+                                    "试验次数": data.get("n_trials", 0),
+                                    "文件": f.name
+                                })
+                            except:
+                                pass
+                        
+                        if hpo_data:
+                            hpo_df = pd.DataFrame(hpo_data)
+                            st.dataframe(hpo_df, use_container_width=True, hide_index=True)
+                            
+                            if st.button("🗑️ 清空HPO缓存", key="clear_hpo"):
+                                for f in hpo_files:
+                                    f.unlink()
+                                st.rerun()
+                    else:
+                        st.info("暂无HPO缓存")
+                else:
+                    st.info("暂无HPO缓存")
+
 # ═══════════════════════════════════════════════════════════
 #  📈 回测
 # ═══════════════════════════════════════════════════════════
@@ -1063,10 +1389,10 @@ elif page == "🔄 回测":
         "通道突破(20/10)":   ChannelBreakoutStrategy(20, 10),
         "布林带(20/2)":      BollingerStrategy(20, 2),
         "滚动预测(月频)":    RollingPredictionStrategy(
-            GBDTModel(lookback=30), warmup=200, retrain_freq=20,
+            GBDTModel(), warmup=200, retrain_freq=20,
             threshold_buy=0.015, threshold_sell=-0.015),
         "滚动预测(周频)":    RollingPredictionStrategy(
-            GBDTModel(lookback=30), warmup=200, retrain_freq=5,
+            GBDTModel(), warmup=200, retrain_freq=5,
             threshold_buy=0.01, threshold_sell=-0.01),
     }
 
@@ -1124,63 +1450,82 @@ elif page == "🔄 回测":
         if not run_btn:
             st.info("选择参数后点击「运行回测」")
         else:
-            # 按时间范围过滤数据
             df = df_raw
-        if start_date and end_date:
-            df = df_raw[(df_raw["Date"] >= pd.Timestamp(start_date)) &
-                        (df_raw["Date"] <= pd.Timestamp(end_date))]
-            if df.empty:
-                st.error("选定时间范围内无数据")
-                st.stop()
+            if start_date and end_date:
+                df = df_raw[(df_raw["Date"] >= pd.Timestamp(start_date)) &
+                            (df_raw["Date"] <= pd.Timestamp(end_date))]
+                if df.empty:
+                    st.error("选定时间范围内无数据")
+                    st.stop()
 
-        strat = strategy_map[strategy_name]
+            strat = strategy_map[strategy_name]
 
-        with st.spinner("回测进行中..."):
-            cfg = BacktestConfig(initial_capital=capital, market=info["market"])
-            result = BacktestEngine(df, strat, cfg).run()
+            with st.spinner("回测进行中..."):
+                cfg = BacktestConfig(initial_capital=capital, market=info["market"])
+                result = BacktestEngine(df, strat, cfg).run()
 
-        # 保存历史
-        from src.data.bt_history import add_bt_record
-        add_bt_record(info["symbol"], info["market"], info["name"],
-                      strategy_name, capital,
-                      result.total_return, result.annual_return,
-                      result.sharpe_ratio, result.max_drawdown,
-                      result.win_rate, result.profit_factor,
-                      result.total_trades, result.total_fees)
+            from src.data.bt_history import add_bt_record
+            add_bt_record(info["symbol"], info["market"], info["name"],
+                          strategy_name, capital,
+                          result.total_return, result.annual_return,
+                          result.sharpe_ratio, result.max_drawdown,
+                          result.win_rate, result.profit_factor,
+                          result.total_trades, result.total_fees)
 
-        st.divider()
-        st.subheader("📊 绩效指标")
-        cols = st.columns(5)
-        for col, (k, v) in zip(cols, result.metrics.items()):
-            col.metric(k, v)
+            st.divider()
+            st.subheader("📊 绩效指标")
+            cols = st.columns(5)
+            for col, (k, v) in zip(cols, result.metrics.items()):
+                col.metric(k, v)
 
-        st.divider()
-        fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
-                            row_heights=[0.5, 0.25, 0.25], vertical_spacing=0.06,
-                            subplot_titles=("组合净值", "回撤曲线", "持仓市值"))
-        dates = result.equity_curve.index
-        fig.add_trace(go.Scatter(x=dates, y=result.equity_curve.values,
-                                 name="组合净值", line=dict(color="black")), row=1, col=1)
-        fig.add_hline(y=capital, line_dash="dash", line_color="gray", row=1, col=1)
-        peak = np.maximum.accumulate(result.equity_curve.values)
-        dd = (result.equity_curve.values - peak) / peak * 100
-        fig.add_trace(go.Scatter(x=dates, y=dd, name="回撤(%)",
-                                 fill="tozeroy", line=dict(color="red")), row=2, col=1)
-        fig.add_trace(go.Scatter(x=dates, y=result.holdings_curve.values,
-                                 name="持仓市值", fill="tozeroy",
-                                 line=dict(color="#1f77b4")), row=3, col=1)
-        fig.update_layout(height=600, hovermode="x unified",
-                           title=f"{info['name']} — {strategy_name}",
-                           template=plotly_template())
-        st.plotly_chart(fig, use_container_width=True)
+            st.divider()
+            fig = make_subplots(rows=3, cols=1, shared_xaxes=True,
+                                row_heights=[0.5, 0.25, 0.25], vertical_spacing=0.06,
+                                subplot_titles=("组合净值", "回撤曲线", "持仓市值"))
+            dates = result.equity_curve.index
+            fig.add_trace(go.Scatter(x=dates, y=result.equity_curve.values,
+                                     name="组合净值", line=dict(color="black")), row=1, col=1)
+            fig.add_hline(y=capital, line_dash="dash", line_color="gray", row=1, col=1)
+            peak = np.maximum.accumulate(result.equity_curve.values)
+            dd = (result.equity_curve.values - peak) / peak * 100
+            fig.add_trace(go.Scatter(x=dates, y=dd, name="回撤(%)",
+                                     fill="tozeroy", line=dict(color="red")), row=2, col=1)
+            fig.add_trace(go.Scatter(x=dates, y=result.holdings_curve.values,
+                                     name="持仓市值", fill="tozeroy",
+                                     line=dict(color="#1f77b4")), row=3, col=1)
+            fig.update_layout(height=600, hovermode="x unified",
+                               title=f"{info['name']} — {strategy_name}",
+                               template=plotly_template())
+            st.plotly_chart(fig, use_container_width=True)
 
-        st.divider()
-        st.subheader(f"📝 交易记录 ({result.total_trades} 笔)")
-        tdf = result.trades_df()
-        if not tdf.empty:
-            st.dataframe(tdf, use_container_width=True, hide_index=True)
-        else:
-            st.info("无交易记录")
+            st.divider()
+            st.subheader(f"📝 交易记录 ({result.total_trades} 笔)")
+            tdf = result.trades_df()
+            if not tdf.empty:
+                st.dataframe(tdf, use_container_width=True, hide_index=True)
+            else:
+                st.info("无交易记录")
+
+            with st.expander("🔧 策略参数", expanded=False):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    st.write("📡 数据源:", _detect_source_name(info["symbol"], info["market"]))
+                    st.write("💰 初始资金:", f"{capital:,.0f}")
+                with c2:
+                    st.write("🎯 策略:", strategy_name)
+                    st.write("📅 回测区间:", f"{start_date} ~ {end_date}")
+                with c3:
+                    cfg_params = {
+                        "手续费率": f"{cfg.fee_rate*100:.2f}%",
+                        "印花税": f"{cfg.stamp_tax*100:.2f}%",
+                        "滑点": f"{cfg.slippage*100:.2f}%",
+                    }
+                    if hasattr(strat, '__dict__'):
+                        strat_params = {k: v for k, v in strat.__dict__.items() 
+                                       if not k.startswith('_') and k != 'name'}
+                        if strat_params:
+                            st.write("⚙️ 策略参数:", ", ".join(f"{k}={v}" for k, v in strat_params.items()))
+                    st.write("🛠️ 配置:", ", ".join(f"{k}={v}" for k, v in cfg_params.items()))
 
     # ══════════════════════════════════════════════════════
     #  历史记录
@@ -1191,37 +1536,35 @@ elif page == "🔄 回测":
         history = load_bt_history()
         if not history:
             st.info("暂无回测历史, 先做一个回测吧")
-            st.stop()
+        else:
+            for h in reversed(history):
+                with st.expander(f"{h.predicted_at} | [{h.market}] {h.symbol} {h.stock_name} "
+                                 f"— {h.strategy} | 收益{h.total_return*100:+.1f}% "
+                                 f"夏普{h.sharpe:.2f} 回撤{h.max_dd*100:.1f}% 交易{h.total_trades}笔"):
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    c1.metric("总收益", f"{h.total_return*100:.2f}%")
+                    c2.metric("夏普", f"{h.sharpe:.2f}")
+                    c3.metric("最大回撤", f"{h.max_dd*100:.2f}%")
+                    c4.metric("胜率", f"{h.win_rate*100:.1f}%")
+                    c5.metric("交易次数", str(h.total_trades))
 
-        for h in reversed(history):
-            with st.expander(f"{h.predicted_at} | [{h.market}] {h.symbol} {h.stock_name} "
-                             f"— {h.strategy} | 收益{h.total_return*100:+.1f}% "
-                             f"夏普{h.sharpe:.2f} 回撤{h.max_dd*100:.1f}% 交易{h.total_trades}笔"):
-                c1, c2, c3, c4, c5 = st.columns(5)
-                c1.metric("总收益", f"{h.total_return*100:.2f}%")
-                c2.metric("夏普", f"{h.sharpe:.2f}")
-                c3.metric("最大回撤", f"{h.max_dd*100:.2f}%")
-                c4.metric("胜率", f"{h.win_rate*100:.1f}%")
-                c5.metric("交易次数", str(h.total_trades))
-
-                if st.button("🔄 一键重测", key=f"bt_retest_{h.id}",
-                             use_container_width=True, type="primary"):
-                    df = get_data_for(h.symbol, h.market, h.stock_name)
-                    # Reconstruct strategy
-                    strat_map = {k: v for k, v in strategy_map.items()}
-                    s = strat_map.get(h.strategy)
-                    if s:
-                        cfg = BacktestConfig(initial_capital=h.capital, market=h.market)
-                        r2 = BacktestEngine(df, s, cfg).run()
-                        from src.data.bt_history import add_bt_record
-                        add_bt_record(h.symbol, h.market, h.stock_name,
-                                      h.strategy, h.capital,
-                                      r2.total_return, r2.annual_return,
-                                      r2.sharpe_ratio, r2.max_drawdown,
-                                      r2.win_rate, r2.profit_factor,
-                                      r2.total_trades, r2.total_fees)
-                        st.success(f"重测完成: 收益{r2.total_return*100:+.1f}%")
-                        st.rerun()
+                    if st.button("🔄 一键重测", key=f"bt_retest_{h.id}",
+                                 use_container_width=True, type="primary"):
+                        df = get_data_for(h.symbol, h.market, h.stock_name)
+                        strat_map = {k: v for k, v in strategy_map.items()}
+                        s = strat_map.get(h.strategy)
+                        if s:
+                            cfg = BacktestConfig(initial_capital=h.capital, market=h.market)
+                            r2 = BacktestEngine(df, s, cfg).run()
+                            from src.data.bt_history import add_bt_record
+                            add_bt_record(h.symbol, h.market, h.stock_name,
+                                          h.strategy, h.capital,
+                                          r2.total_return, r2.annual_return,
+                                          r2.sharpe_ratio, r2.max_drawdown,
+                                          r2.win_rate, r2.profit_factor,
+                                          r2.total_trades, r2.total_fees)
+                            st.success(f"重测完成: 收益{r2.total_return*100:+.1f}%")
+                            st.rerun()
 
 # ═══════════════════════════════════════════════════════════
 #  ⚠️ 风控
@@ -1310,28 +1653,28 @@ elif page == "🔔 交易监控":
     rules = load_rules()
 
     # ── 自选股列表 + 添加策略按钮 ──
-    st.subheader("📋 自选股票策略")
-    wk = sorted(st.session_state.watchlist)
-    if not wk:
-        st.info("暂无自选股, 请在侧边栏添加")
-    else:
-        for key in wk:
-            parts = key.split("-", 1)
-            if len(parts) != 2:
-                continue
-            market, symbol = parts
-            name = st.session_state.stock_names.get(key, symbol)
-            stock_rules = [r for r in rules if r.symbol == symbol and r.market == market]
-            c1, c2, c3 = st.columns([3, 2, 1])
-            with c1:
-                st.write(f"[{market}] **{symbol}** {name}")
-            with c2:
-                n = len(stock_rules)
-                st.write(f"策略: {n} 条" if n else "无策略")
-            with c3:
-                if st.button("＋ 添加", key=f"as_{key}", use_container_width=True):
-                    st.session_state.alert_target = (symbol, market, name)
-                    st.rerun()
+    with st.expander("📋 自选股票策略", expanded=True):
+        wk = sorted(st.session_state.watchlist)
+        if not wk:
+            st.info("暂无自选股, 请在侧边栏添加")
+        else:
+            for key in wk:
+                parts = key.split("-", 1)
+                if len(parts) != 2:
+                    continue
+                market, symbol = parts
+                name = st.session_state.stock_names.get(key, symbol)
+                stock_rules = [r for r in rules if r.symbol == symbol and r.market == market]
+                c1, c2, c3 = st.columns([3, 2, 1])
+                with c1:
+                    st.write(f"[{market}] **{symbol}** {name}")
+                with c2:
+                    n = len(stock_rules)
+                    st.write(f"策略: {n} 条" if n else "无策略")
+                with c3:
+                    if st.button("＋ 添加", key=f"as_{key}", use_container_width=True):
+                        st.session_state.alert_target = (symbol, market, name)
+                        st.rerun()
 
     st.divider()
 
@@ -1530,6 +1873,52 @@ elif page == "🔔 交易监控":
             st.toast("监控已停止", icon="🔴")
             st.rerun()
 
+    # ── 连接健康状态 ──
+    st.divider()
+    st.subheader("📡 连接状态监控")
+    from src.alerts.health import summary as health_summary, get_health
+    hs = health_summary()
+    recent_checks = get_health().recent(60)
+
+    status_map = {
+        "ok": ("🟢 正常", "success"),
+        "degraded": ("🟡 降级", "warning"),
+        "down": ("🔴 断连", "error"),
+        "unknown": ("⚪ 未知", "info"),
+    }
+    status_label, status_type = status_map.get(hs["status"], ("⚪ 未知", "info"))
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        st.metric("状态", status_label)
+    with c2:
+        st.metric("近1h查询", str(hs["recent_checks"]))
+    with c3:
+        st.metric("成功率", f"{hs['success_rate']}%")
+    with c4:
+        fail_count = hs["consecutive_failures"]
+        fail_label = f"⚠️ {fail_count}" if fail_count > 0 else "0"
+        st.metric("连续失败", fail_label)
+    with c5:
+        lat = hs.get("avg_latency_ms", 0)
+        st.metric("平均延迟", f"{lat:.0f}ms" if lat else "-")
+
+    if hs.get("last_error"):
+        st.error(f"最近错误: {hs['last_error']}")
+
+    if recent_checks:
+        with st.expander("📋 最近查询记录", expanded=False):
+            import pandas as pd
+            checks_df = pd.DataFrame(reversed(recent_checks))
+            display_cols = ["checked_at", "symbol", "market", "success", "latency_ms", "error"]
+            show_cols = [c for c in display_cols if c in checks_df.columns]
+            checks_df = checks_df[show_cols].head(30)
+            checks_df = checks_df.rename(columns={
+                "checked_at": "时间", "symbol": "代码", "market": "市场",
+                "success": "成功", "latency_ms": "延迟(ms)", "error": "错误"
+            })
+            st.dataframe(checks_df, use_container_width=True, hide_index=True)
+
 # ═══════════════════════════════════════════════════════════
 #  🔍 选股器
 # ═══════════════════════════════════════════════════════════
@@ -1585,6 +1974,9 @@ elif page == "🔍 选股器":
             elif new_cond == "alpha053":
                 cdata["params"]["threshold_up"] = st.number_input("涨阈值", 1.01, 1.2, float(cdata["params"].get("threshold_up", 1.05)), 0.01, key=f"scp_a53u_{idx}")
                 cdata["params"]["threshold_dn"] = st.number_input("跌阈值", 0.8, 0.99, float(cdata["params"].get("threshold_dn", 0.95)), 0.01, key=f"scp_a53d_{idx}")
+            elif new_cond == "alpha015":
+                cdata["params"]["window"] = st.number_input("窗口", 10, 60, int(cdata["params"].get("window", 20)), key=f"scp_a15w_{idx}")
+                cdata["params"]["threshold"] = st.number_input("阈值", 0.1, 0.8, float(cdata["params"].get("threshold", 0.3)), 0.05, key=f"scp_a15t_{idx}")
             else:
                 st.caption("无额外参数")
         with c3:
@@ -1627,16 +2019,11 @@ elif page == "🔍 选股器":
         # 应用 AND/OR 逻辑
         final = []
         for key, val in all_hits.items():
-            matched = True
-            for i, cdata in enumerate(st.session_state.scr_conds):
-                if i == 0: continue  # 第一个条件已在 screen_market 中满足
-                if cdata["logic"] == "AND":
-                    if cdata["cond"] not in val["conds"]:
-                        matched = False
-                else:  # OR
-                    if cdata["cond"] in val["conds"]:
-                        matched = True
-            if matched:
+            and_conditions = [c for c in st.session_state.scr_conds if c["logic"] == "AND"]
+            or_conditions = [c for c in st.session_state.scr_conds if c["logic"] == "OR"]
+            and_ok = all(c["cond"] in val["conds"] for c in and_conditions) if and_conditions else True
+            or_ok = any(c["cond"] in val["conds"] for c in or_conditions) if or_conditions else True
+            if and_ok and or_ok:
                 final.append(val["hit"])
                 if len(final) >= limit:
                     break
@@ -1713,9 +2100,12 @@ elif page == "💰 模拟交易":
             else:
                 pos = acc["positions"].get(key)
                 if pos and pos["shares"] >= shares:
-                    profit = price * shares * 0.9997
-                    pnl = (price - pos["price"]) * shares
-                    acc["cash"] += profit
+                    gross = price * shares
+                    fee = gross * 0.0003
+                    stamp_tax = gross * 0.001
+                    net = gross - fee - stamp_tax
+                    pnl = (price - pos["price"]) * shares - fee - stamp_tax
+                    acc["cash"] += net
                     pos["shares"] -= shares
                     if pos["shares"] == 0:
                         del acc["positions"][key]
@@ -1807,7 +2197,8 @@ elif page == "🧠 策略推荐":
             # ── 执行扫描 ──
             if run:
                 info = info_for(target)
-                df = get_data_notify(info["symbol"], info["market"], info["name"])
+                from src.data.fetcher import fetch_realtime_data
+                df = fetch_realtime_data(info["symbol"], info["market"])
                 # 默认使用最近一年半数据回测
                 from datetime import datetime, timedelta
                 cutoff = pd.Timestamp(datetime.now() - timedelta(days=540))
@@ -1816,7 +2207,8 @@ elif page == "🧠 策略推荐":
                     st.error("最近一年半数据不足")
                     st.stop()
                 with st.spinner("运行 5 个预测模型 + 8 个回测策略..."):
-                    models = scan_predictions(df, steps=pred_steps)
+                    source = _detect_source_name(info["symbol"], info["market"])
+                    models = scan_predictions(df, steps=pred_steps, data_source=source)
                     strategies = scan_strategies(df, info["symbol"], info["market"], capital)
                     risk = calc_all_risk_metrics(df)
                     cur_price = float(df["Close"].iloc[-1])
@@ -1879,7 +2271,25 @@ elif page == "🧠 策略推荐":
                            "MAPE": f"{m.mape:.1f}%" if not m.error else "-"}
                           for m in models]
                 st.dataframe(pd.DataFrame(m_rows), use_container_width=True, hide_index=True)
-        
+
+                with st.expander("🔧 模型参数详情", expanded=False):
+                    for m in models:
+                        if m.error:
+                            continue
+                        st.caption(f"**{m.model}**")
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            st.write("📡 数据源:", m.data_source or "—")
+                            params = m.model_params.get("params", {}) if m.model_params else {}
+                            if params:
+                                st.write("⚙️ 参数:", ", ".join(f"{k}={v}" for k, v in params.items()))
+                        with c2:
+                            feats = m.feature_names
+                            st.write(f"📊 因子: {len(feats)}个" if feats else "📊 因子: —")
+                            if feats:
+                                with st.expander(f"查看 ({len(feats)}个)", expanded=False):
+                                    st.caption(", ".join(str(f) for f in feats))
+
                 # ── 回测 ──
                 st.subheader("📈 策略回测对比", help="各策略在历史数据上的回测绩效")
                 s_rows = []
@@ -1894,7 +2304,15 @@ elif page == "🧠 策略推荐":
                                        "胜率": f"{s.win_rate*100:.0f}%",
                                        "交易": s.total_trades})
                 st.dataframe(pd.DataFrame(s_rows), use_container_width=True, hide_index=True)
-        
+
+                with st.expander("🔧 回测策略参数", expanded=False):
+                    for s in strategies:
+                        if s.error:
+                            continue
+                        st.caption(f"**{s.strategy}**")
+                        if s.strategy_params:
+                            st.write("⚙️ ", ", ".join(f"{k}={v}" for k, v in s.strategy_params.items()))
+
                 # ── 风控 ──
                 with st.expander("📊 风控指标"):
                     cols = st.columns(5)
@@ -1976,38 +2394,34 @@ elif page == "🧠 策略推荐":
         history = load_rec_history()
         if not history:
             st.info("暂无推荐历史")
-            st.stop()
+        else:
+            for h in reversed(history):
+                with st.expander(f"{h.predicted_at} | {h.stock_name} ({h.market}:{h.symbol}) "
+                                 f"— 共识{h.model_consensus} 最佳{h.best_strategy}"):
+                    cols = st.columns(5)
+                    cols[0].metric("当前价", f"{h.current_price:.2f}")
+                    cols[1].metric("模型共识", h.model_consensus)
+                    cols[2].metric("最佳策略", h.best_strategy)
+                    cols[3].metric("最佳收益", f"{h.best_ret*100:+.1f}%")
+                    cols[4].metric("最佳夏普", f"{h.best_sharpe:.2f}")
 
-        for h in reversed(history):
-            with st.expander(f"{h.predicted_at} | {h.stock_name} ({h.market}:{h.symbol}) "
-                             f"— 共识{h.model_consensus} 最佳{h.best_strategy}"):
-                cols = st.columns(5)
-                cols[0].metric("当前价", f"{h.current_price:.2f}")
-                cols[1].metric("模型共识", h.model_consensus)
-                cols[2].metric("最佳策略", h.best_strategy)
-                cols[3].metric("最佳收益", f"{h.best_ret*100:+.1f}%")
-                cols[4].metric("最佳夏普", f"{h.best_sharpe:.2f}")
+                    if h.models_data:
+                        st.caption("🔮 模型预测")
+                        mdf = pd.DataFrame([{k: str(v) for k, v in m.items()} for m in h.models_data])
+                        st.dataframe(mdf, use_container_width=True, hide_index=True)
 
-                # 模型详情
-                if h.models_data:
-                    st.caption("🔮 模型预测")
-                    mdf = pd.DataFrame([{k: str(v) for k, v in m.items()} for m in h.models_data])
-                    st.dataframe(mdf, use_container_width=True, hide_index=True)
+                    if h.strategies_data:
+                        st.caption("📈 策略对比")
+                        sdf = pd.DataFrame([{
+                            "策略": s.get("strategy",""), "收益": f"{s.get('total_return',0)*100:+.1f}%",
+                            "夏普": f"{s.get('sharpe',0):.2f}", "回撤": f"{s.get('max_dd',0)*100:.1f}%",
+                            "胜率": f"{s.get('win_rate',0)*100:.0f}%", "交易": s.get("total_trades",0),
+                        } for s in h.strategies_data])
+                        st.dataframe(sdf, use_container_width=True, hide_index=True)
 
-                # 策略对比
-                if h.strategies_data:
-                    st.caption("📈 策略对比")
-                    sdf = pd.DataFrame([{
-                        "策略": s.get("strategy",""), "收益": f"{s.get('total_return',0)*100:+.1f}%",
-                        "夏普": f"{s.get('sharpe',0):.2f}", "回撤": f"{s.get('max_dd',0)*100:.1f}%",
-                        "胜率": f"{s.get('win_rate',0)*100:.0f}%", "交易": s.get("total_trades",0),
-                    } for s in h.strategies_data])
-                    st.dataframe(sdf, use_container_width=True, hide_index=True)
-
-                # 完整报告
-                if h.report:
-                    with st.expander("📋 完整报告"):
-                        st.code(h.report)
+                    if h.report:
+                        with st.expander("📋 完整报告"):
+                            st.code(h.report)
 
 # ═══════════════════════════════════════════════════════════
 #  ℹ️ 自选详情
