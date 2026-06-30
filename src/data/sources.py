@@ -367,6 +367,96 @@ class WindMCPSource(BaseSource):
         return df.sort_values("Date").reset_index(drop=True)
 
 
+# ─── Finnhub (美股+港股实时, 免费60 calls/min) ─────────────
+class FinnhubSource(BaseSource):
+    name = "Finnhub"
+    priority = 0
+
+    def __init__(self):
+        super().__init__()
+        self._api_key = None
+
+    def _get_api_key(self) -> str:
+        if self._api_key is not None:
+            return self._api_key
+        from src.utils.config import load_config
+        cfg = load_config()
+        self._api_key = cfg.get("finnhub_api_key", "") or ""
+        return self._api_key
+
+    @staticmethod
+    def _finnhub_symbol(symbol: str, market: str) -> str:
+        s = symbol.strip()
+        if market == "US":
+            return s
+        elif market == "HK":
+            stripped = s.lstrip("0")
+            if len(stripped) < 4:
+                stripped = stripped.zfill(4)
+            return stripped + ".HK"
+        return s
+
+    @retry(max_attempts=2, delay=0.5)
+    def fetch_historical(self, symbol: str, period_days: int = 730,
+                         market: str = "") -> Optional[pd.DataFrame]:
+        import requests
+        api_key = self._get_api_key()
+        if not api_key:
+            raise ValueError("未配置 Finnhub API Key")
+
+        sym = self._finnhub_symbol(symbol, market)
+        end_ts = int(time.time())
+        start_ts = int((datetime.now() - timedelta(days=period_days)).timestamp())
+
+        url = f"https://finnhub.io/api/v1/stock/candle?symbol={sym}&resolution=D&from={start_ts}&to={end_ts}&token={api_key}"
+        resp = requests.get(url, timeout=15)
+        data = resp.json()
+
+        if data.get("s") != "ok" or not data.get("c"):
+            # 免费套餐不支持历史K线, 尝试用quote构造单条数据
+            try:
+                quote_url = f"https://finnhub.io/api/v1/quote?symbol={sym}&token={api_key}"
+                qresp = requests.get(quote_url, timeout=10)
+                qdata = qresp.json()
+                if qdata.get("c"):
+                    return pd.DataFrame({
+                        "Date": [datetime.now()],
+                        "Open": [qdata.get("o", qdata["c"])],
+                        "High": [qdata.get("h", qdata["c"])],
+                        "Low": [qdata.get("l", qdata["c"])],
+                        "Close": [qdata["c"]],
+                        "Volume": [0],
+                    })
+            except Exception:
+                pass
+            return None
+
+        df = pd.DataFrame({
+            "Date": pd.to_datetime(data["t"], unit="s"),
+            "Open": data["o"],
+            "High": data["h"],
+            "Low": data["l"],
+            "Close": data["c"],
+            "Volume": data["v"],
+        })
+        return df.sort_values("Date").reset_index(drop=True)
+
+    def fetch_realtime(self, symbol: str, market: str = "") -> Optional[float]:
+        import requests
+        api_key = self._get_api_key()
+        if not api_key:
+            return None
+
+        sym = self._finnhub_symbol(symbol, market)
+        url = f"https://finnhub.io/api/v1/quote?symbol={sym}&token={api_key}"
+        try:
+            resp = requests.get(url, timeout=10)
+            data = resp.json()
+            return data.get("c") or None
+        except Exception:
+            return None
+
+
 # ─── Mock 数据源 (最终回退) ────────────────────────────────
 class MockSource(BaseSource):
     name = "模拟数据"
@@ -397,8 +487,8 @@ class MockSource(BaseSource):
 # 优先级: Yahoo(海外可访问) > 东方财富(国内) > Mock
 MARKET_SOURCES: dict[str, list[BaseSource]] = {
     "A":  [TushareSource(), YahooSource(), EastMoneySource(), SinaSource(), MockSource()],
-    "HK": [YahooSource(), HKEastMoneySource(), MockSource()],
-    "US": [YahooSource(), USEastMoneySource(), MockSource()],
+    "HK": [FinnhubSource(), YahooSource(), HKEastMoneySource(), MockSource()],
+    "US": [FinnhubSource(), YahooSource(), USEastMoneySource(), MockSource()],
 }
 
 WIND_SOURCE = WindMCPSource()

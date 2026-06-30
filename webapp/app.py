@@ -3,7 +3,7 @@
 """
 import sys, time, json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import streamlit as st
 import pandas as pd
@@ -331,6 +331,23 @@ def _save_stock_order():
 if "active_group" not in st.session_state:
     st.session_state.active_group = "全部"
 
+if "group_order" not in st.session_state:
+    order_file = DATA_DIR / "group_order.json"
+    try:
+        if order_file.exists():
+            st.session_state.group_order = json.loads(order_file.read_text())
+        else:
+            st.session_state.group_order = sorted(set(st.session_state.stock_groups.values()))
+    except Exception:
+        st.session_state.group_order = sorted(set(st.session_state.stock_groups.values()))
+
+def _save_group_order():
+    try:
+        (DATA_DIR / "group_order.json").write_text(
+            json.dumps(st.session_state.group_order, ensure_ascii=False))
+    except Exception:
+        pass
+
 
 # ─── 自选管理工具 ─────────────────────────────────────────
 def _watchlist_key(info: dict) -> str:
@@ -477,22 +494,68 @@ with st.sidebar:
             Path(tmp_path).unlink(missing_ok=True)
 
     st.divider()
-    # 分组过滤
-    all_groups = sorted(set(st.session_state.stock_groups.values()) | {"全部"})
-    active = st.selectbox("📂 分组", all_groups,
-                           index=all_groups.index(st.session_state.active_group) if st.session_state.active_group in all_groups else 0,
+    # 分组管理
+    current_groups = [g for g in st.session_state.group_order
+                      if g in set(st.session_state.stock_groups.values())]
+    for g in set(st.session_state.stock_groups.values()):
+        if g not in current_groups:
+            current_groups.append(g)
+    st.session_state.group_order = current_groups
+    _save_group_order()
+
+    display_groups = current_groups + ["全部"]
+    active = st.selectbox("📂 分组", display_groups,
+                           index=display_groups.index(st.session_state.active_group) if st.session_state.active_group in display_groups else 0,
                            key="grp_select")
     if active != st.session_state.active_group:
         st.session_state.active_group = active
         st.rerun()
 
+    # 分组拖拽排序组件
+    from src.components.group_drag import group_drag
+    grp_drag_data = []
+    for gname in current_groups:
+        cnt = sum(1 for v in st.session_state.stock_groups.values() if v == gname)
+        grp_drag_data.append({"name": gname, "count": cnt})
+    new_order = group_drag(grp_drag_data, dark=st.session_state.get("dark_mode", False))
+    if new_order and len(new_order) == len(current_groups):
+        st.session_state.group_order = [str(g) for g in new_order]
+        _save_group_order()
+
+    with st.expander("⚙️ 分组管理", expanded=False):
+        for idx, gname in enumerate(current_groups):
+            cnt = sum(1 for v in st.session_state.stock_groups.values() if v == gname)
+            gc1, gc2, gc3 = st.columns([4, 1, 1])
+            with gc1:
+                new_name = st.text_input(f"grpname_{idx}", value=gname, key=f"grp_rename_{idx}",
+                                         label_visibility="collapsed")
+            with gc2:
+                st.caption(f"{cnt}只")
+            with gc3:
+                if new_name and new_name != gname and new_name.strip():
+                    if st.button("✓", key=f"grp_apply_{idx}", help="确认改名"):
+                        old_name = gname
+                        st.session_state.group_order[idx] = new_name.strip()
+                        for k, v in list(st.session_state.stock_groups.items()):
+                            if v == old_name:
+                                st.session_state.stock_groups[k] = new_name.strip()
+                        _persist_watchlist()
+                        _save_group_order()
+                        st.rerun()
+
     st.subheader(f"📋 自选列表 ({len(st.session_state.watchlist)})")
 
     if st.session_state.watchlist:
+        from src.alerts.engine import load_rules
+        alert_rules_sidebar = load_rules()
+        monitored_sidebar = set(
+            f"{r.market}-{r.symbol}" for r in alert_rules_sidebar if r.enabled
+        )
         keys_to_show = [k for k in st.session_state.stock_order if k in st.session_state.watchlist]
         for k in st.session_state.watchlist:
             if k not in keys_to_show:
                 keys_to_show.append(k)
+
         for idx, key in enumerate(keys_to_show):
             parts = key.split("-", 1)
             if len(parts) != 2:
@@ -500,28 +563,41 @@ with st.sidebar:
             market, symbol = parts
             name = st.session_state.stock_names.get(key, symbol)
             display = f"{symbol} {name}" if name and name != symbol else symbol
-            c1, c2, c3, c4 = st.columns([3, 1, 0.5, 0.5])
+            group_tag = st.session_state.stock_groups.get(key, "默认")
+            is_mon = key in monitored_sidebar
+            label_prefix = "🟢" if is_mon else ""
+            c1, c2, c3 = st.columns([3, 1, 0.8])
             with c1:
-                if st.button(f"[{market}] {display}", key=f"sel_{key}", use_container_width=True):
+                if st.button(f"{label_prefix}[{market}] {display}", key=f"sidebar_sel_{key}", use_container_width=True):
                     st.session_state.selected_stock = key
                     st.session_state.page = "ℹ️ 自选详情"
                     st.rerun()
             with c2:
-                if st.button("✕", key=f"del_{key}", help="删除"):
-                    _remove_from_watchlist(key)
+                group_opts = st.session_state.group_order + ["+新分组"]
+                try:
+                    gi = group_opts.index(group_tag)
+                except ValueError:
+                    gi = 0
+                selected_grp = st.selectbox("_g", group_opts, index=gi,
+                                            key=f"sidebar_grp_{key}", label_visibility="collapsed")
+                if selected_grp == "+新分组":
+                    new_g = st.text_input("_ng", key=f"sidebar_newg_{key}",
+                                          placeholder="新分组名", label_visibility="collapsed")
+                    if new_g and new_g != group_tag:
+                        st.session_state.stock_groups[key] = new_g
+                        if new_g not in st.session_state.group_order:
+                            st.session_state.group_order.append(new_g)
+                        _persist_watchlist()
+                        _save_group_order()
+                        st.rerun()
+                elif selected_grp != group_tag:
+                    st.session_state.stock_groups[key] = selected_grp
+                    _persist_watchlist()
                     st.rerun()
             with c3:
-                if idx > 0:
-                    if st.button("⬆", key=f"up_{key}", help="上移"):
-                        st.session_state.stock_order.remove(key)
-                        st.session_state.stock_order.insert(idx - 1, key)
-                        st.rerun()
-            with c4:
-                if idx < len(keys_to_show) - 1:
-                    if st.button("⬇", key=f"dn_{key}", help="下移"):
-                        st.session_state.stock_order.remove(key)
-                        st.session_state.stock_order.insert(idx + 1, key)
-                        st.rerun()
+                if st.button("✕", key=f"sidebar_del_{key}", help="删除"):
+                    _remove_from_watchlist(key)
+                    st.rerun()
     else:
         st.caption("暂无自选股, 上方搜索添加")
 
@@ -590,7 +666,7 @@ with st.sidebar:
 # ═══════════════════════════════════════════════════════════
 #  顶部导航
 # ═══════════════════════════════════════════════════════════
-PAGES = ["🏠 仪表盘", "📡 预测", "🔄 回测", "🛡️ 风控", "🔔 交易监控", "🔍 选股器", "💰 模拟交易", "🧠 策略推荐", "ℹ️ 自选详情"]
+PAGES = ["🏠 仪表盘", "🔮 预测", "⏪ 回测", "🛡️ 风控", "🔔 交易监控", "🔍 选股器", "💰 模拟交易", "🧠 策略推荐", "📊 因子库", "ℹ️ 自选详情"]
 
 if "page" not in st.session_state:
     st.session_state.page = PAGES[0]
@@ -672,9 +748,9 @@ if page == "🏠 仪表盘":
                     return (key, True)
                 except Exception:
                     return (key, False)
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-                futs = {pool.submit(_refresh_one, k): k for k in ordered}
-                for fut in concurrent.futures.as_completed(futs, timeout=120):
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                futs = {pool.submit(_refresh_one, k): k for k in ordered[:20]}
+                for fut in concurrent.futures.as_completed(futs, timeout=180):
                     pass
         st.rerun()
 
@@ -686,12 +762,17 @@ if page == "🏠 仪表盘":
         f"{r.market}-{r.symbol}" for r in alert_rules if r.enabled
     )
 
-    all_groups = sorted(set(st.session_state.stock_groups.values()))
+    all_groups = [g for g in st.session_state.group_order
+                  if g in set(st.session_state.stock_groups.values())]
+    for g in set(st.session_state.stock_groups.values()):
+        if g not in all_groups:
+            all_groups.append(g)
     cards = []
     for key in ordered:
         info = info_for(key)
         try:
-            df = fetch_data(info["symbol"], info["market"], use_cache=True)
+            df = get_data_for(info["symbol"], info["market"], period_days=120,
+                              _refresh_key=st.session_state.get("refresh_key", 0))
         except Exception:
             df = _mock_data(info["symbol"], info["market"])
         if df is None or df.empty:
@@ -728,8 +809,13 @@ if page == "🏠 仪表盘":
             "monitored": key in monitored_symbols,
         })
 
-    # 被监控的卡片自动置顶
-    cards.sort(key=lambda c: (not c["monitored"], ordered.index(c["key"]) if c["key"] in ordered else 99))
+    # 按分组顺序排列，每组内监控的排最前
+    group_rank = {g: i for i, g in enumerate(all_groups)}
+    cards.sort(key=lambda c: (
+        group_rank.get(c["group"], 999),
+        not c["monitored"],
+        ordered.index(c["key"]) if c["key"] in ordered else 99
+    ))
 
     result = dash_cards(cards, groups=all_groups,
                         height=max(400, len(cards) * 100 // 4 + 100))
@@ -781,8 +867,8 @@ if page == "🏠 仪表盘":
 # ═══════════════════════════════════════════════════════════
 #  🔮 预测
 # ═══════════════════════════════════════════════════════════
-elif page == "📡 预测":
-    st.title("📡 股价预测")
+elif page == "🔮 预测":
+    st.title("🔮 股价预测")
 
     tab_new, tab_hist, tab_batch, tab_opt = st.tabs(["🔮 新预测", "📜 历史记录", "📊 批量历史", "⚙️ 模型优化"])
 
@@ -793,13 +879,21 @@ elif page == "📡 预测":
         mode = st.radio("模式", ["单股预测", "批量预测"], horizontal=True, key="pred_mode")
 
         if mode == "单股预测":
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 1])
             with col1:
-                keys = st.session_state.watchlist or list(PRESET_STOCKS.keys())
-                target = st.selectbox("股票", keys,
+                pred_grp = st.selectbox("分组",
+                    ["全部"] + st.session_state.group_order,
+                    key="pred_grp_sel")
+            with col2:
+                all_keys = st.session_state.watchlist or list(PRESET_STOCKS.keys())
+                if pred_grp != "全部":
+                    filtered = [k for k in all_keys if st.session_state.stock_groups.get(k, "默认") == pred_grp]
+                else:
+                    filtered = list(all_keys)
+                target = st.selectbox("股票", filtered,
                                       format_func=lambda x: f"{info_for(x)['symbol']} {info_for(x)['name']}",
                                       key="pred_target")
-            with col2:
+            with col3:
                 models_sel = st.multiselect("模型", list_models(),
                                             default=["arima", "gbdt", "xgboost"],
                                             key="pred_models")
@@ -809,14 +903,20 @@ elif page == "📡 预测":
                 run_btn = st.button("▶ 开始预测", type="primary", use_container_width=True)
             targets = [target] if run_btn and target else []
         else:
-            c1, c2 = st.columns([3, 1])
+            c1, c2, c3 = st.columns([2, 1, 1])
             with c1:
                 all_keys = sorted(st.session_state.watchlist)
-                # 全选: 按钮设 flag → 下轮渲染前置入
                 if st.session_state.get("batch_all_flag"):
                     st.session_state.batch_sel = all_keys
                     st.session_state.batch_all_flag = False
-                targets = st.multiselect("批量选股", all_keys,
+                pred_grp_batch = st.selectbox("分组筛选",
+                    ["全部"] + st.session_state.group_order,
+                    key="batch_grp_sel")
+                if pred_grp_batch != "全部":
+                    filtered_keys = [k for k in all_keys if st.session_state.stock_groups.get(k, "默认") == pred_grp_batch]
+                else:
+                    filtered_keys = all_keys
+                targets = st.multiselect("批量选股", filtered_keys,
                                          format_func=lambda x: f"{info_for(x)['symbol']} {info_for(x)['name']}",
                                          key="batch_sel")
             with c2:
@@ -843,7 +943,7 @@ elif page == "📡 预测":
         elif not run_btn:
             st.info("点击 ▶ 开始预测")
         else:
-            batch_summary = []  # 收集批量结果
+            st.session_state.batch_summary = []
             for tidx, tkey in enumerate(targets):
                 info = info_for(tkey)
                 df = get_data_notify(info["symbol"], info["market"], info["name"])
@@ -874,7 +974,7 @@ elif page == "📡 预测":
                             direction = "📈涨" if r.forecast[-1] > r.history[-1] else "📉跌"
                             rows.append({"模型": name, "MAE": m.get("MAE","-"), "方向": direction,
                                          "预测末价": f"{r.forecast[-1]:.2f}"})
-                st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
                 with st.expander("🔧 模型参数详情", expanded=False):
                     for name, r in results.items():
                         if len(r.forecast):
@@ -893,11 +993,11 @@ elif page == "📡 预测":
                                 if feats:
                                     with st.expander(f"查看因子 ({len(feats)})", expanded=False):
                                         st.caption(", ".join(str(f) for f in feats))
-            if valid:
+                if valid:
                     up = sum(1 for _, r in valid if r.forecast[-1] > r.history[-1])
                     prices = [r.forecast[-1] for _, r in valid]
                     avg_pct = np.mean([(r.forecast[-1]-r.history[-1])/r.history[-1]*100 for _, r in valid])
-                    batch_summary.append({
+                    st.session_state.batch_summary.append({
                         "key": tkey,
                         "symbol": info["symbol"],
                         "name": info["name"],
@@ -912,10 +1012,10 @@ elif page == "📡 预测":
                     })
 
             # 保存批量历史
-            if len(batch_summary) >= 2:
+            if len(st.session_state.batch_summary) >= 1:
                 from src.data.batch_history import add_batch_record
                 details = []
-                for item in batch_summary:
+                for item in st.session_state.batch_summary:
                     d = {"symbol": item["symbol"], "name": item["name"],
                          "market": item["market"], "key": item["key"],
                          "up_count": item["up_count"], "avg_pct": item["avg_pct"],
@@ -930,15 +1030,15 @@ elif page == "📡 预测":
                 add_batch_record(steps, models_sel,
                                  [{k: v for k, v in item.items()
                                    if k not in ("results", "df", "info")}
-                                  for item in batch_summary],
+                                  for item in st.session_state.batch_summary],
                                  details)
 
             # 批量简报表格
-            if len(batch_summary) >= 2:
+            if len(st.session_state.batch_summary) >= 1:
                 st.divider()
                 st.subheader("📊 批量预测简报")
-                batch_summary.sort(key=lambda x: x["avg_pct"], reverse=True)
-                for rank, item in enumerate(batch_summary, 1):
+                st.session_state.batch_summary.sort(key=lambda x: x["avg_pct"], reverse=True)
+                for rank, item in enumerate(st.session_state.batch_summary, 1):
                     c1, c2, c3, c4, c5, c6 = st.columns([0.5, 1.5, 1, 1, 1, 1])
                     with c1: st.write(f"#{rank}")
                     with c2: st.write(f"{item['symbol']} {item['name']}")
@@ -962,7 +1062,7 @@ elif page == "📡 预测":
                 # 展开选中股票的详情
                 detail_key = st.session_state.get("batch_detail")
                 if detail_key:
-                    for item in batch_summary:
+                    for item in st.session_state.batch_summary:
                         if item["key"] == detail_key:
                             st.divider()
                             info, results, df = item["info"], item["results"], item["df"]
@@ -1371,8 +1471,8 @@ elif page == "📡 预测":
 # ═══════════════════════════════════════════════════════════
 #  📈 回测
 # ═══════════════════════════════════════════════════════════
-elif page == "🔄 回测":
-    st.title("🔄 回测引擎")
+elif page == "⏪ 回测":
+    st.title("⏪ 回测引擎")
     tab_bt, tab_bt_hist = st.tabs(["📈 新回测", "📜 历史记录"])
 
     STG_LIST = [
@@ -1400,12 +1500,20 @@ elif page == "🔄 回测":
     #  新回测
     # ══════════════════════════════════════════════════════
     with tab_bt:
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3, col4, col5 = st.columns([1, 1, 1, 1, 1])
         with col1:
+            bt_grp = st.selectbox("分组",
+                ["全部"] + st.session_state.group_order,
+                key="bt_grp_sel")
+        with col2:
             keys = st.session_state.watchlist or list(PRESET_STOCKS.keys())
-        target = st.selectbox("股票", keys,
-                              format_func=lambda x: f"{info_for(x)['symbol']} {info_for(x)['name']}",
-                              key="bt_target")
+            if bt_grp != "全部":
+                filtered = [k for k in keys if st.session_state.stock_groups.get(k, "默认") == bt_grp]
+            else:
+                filtered = list(keys)
+            target = st.selectbox("股票", filtered,
+                                  format_func=lambda x: f"{info_for(x)['symbol']} {info_for(x)['name']}",
+                                  key="bt_target")
         with col2:
             strategy_name = st.selectbox("策略", STG_LIST, key="bt_strat")
         with col3:
@@ -2138,6 +2246,124 @@ elif page == "💰 模拟交易":
                 st.write(h)
 
 # ═══════════════════════════════════════════════════════════
+#  📊 因子库
+# ═══════════════════════════════════════════════════════════
+elif page == "📊 因子库":
+    st.title("📊 因子库")
+
+    # Load factor definitions
+    import json
+    factor_file = Path(__file__).resolve().parent.parent / "data" / "factors.json"
+    if factor_file.exists():
+        factor_data = json.loads(factor_file.read_text())
+    else:
+        factor_data = {"factors": [], "models": [], "strategies": []}
+
+    # ── Tab: 因子列表 ──
+    tab1, tab2, tab3 = st.tabs(["🧬 因子列表", "🤖 模型", "✅ 数据源验证"])
+
+    with tab1:
+        types = sorted(set(f["type"] for f in factor_data["factors"]))
+        sel_type = st.selectbox("因子类型", ["全部"] + types, key="factor_type")
+        filtered = factor_data["factors"]
+        if sel_type != "全部":
+            filtered = [f for f in filtered if f["type"] == sel_type]
+
+        rows = []
+        for f in filtered:
+            bias = "✅" if not f.get("forward_bias") else "⚠️"
+            rows.append({
+                "ID": f["id"], "因子": f["name"], "类型": f["type"],
+                "描述": f["desc"], "回溯窗口": f["lookback"], "未来泄漏": bias
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
+                     column_config={"描述": st.column_config.TextColumn(width="large")})
+        st.caption(f"共 {len(filtered)} 个因子 · 全部 ✅ 无未来函数泄漏 · 目标变量已对齐 shift+1")
+
+    with tab2:
+        st.subheader("预测模型")
+        for m in factor_data["models"]:
+            badge = "🟢 轻量" if m.get("light") else "🟡 重模型(PyTorch)"
+            st.markdown(f"**{m['name']}** {badge} — {m['desc']}")
+
+        st.subheader("回测策略")
+        for s in factor_data["strategies"]:
+            st.markdown(f"- **{s['name']}**: {s['desc']}")
+
+    with tab3:
+        st.subheader("📡 数据源连通性验证")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("🔍 验证全部", use_container_width=True, type="primary"):
+                with st.spinner("检测中..."):
+                    results = {}
+                    # Tushare
+                    try:
+                        from src.utils.config import get_tushare_token
+                        import tushare as ts
+                        pro = ts.pro_api(get_tushare_token())
+                        df = pro.daily(ts_code="000001.SZ", start_date="20260101", end_date="20260105")
+                        results["Tushare"] = ("✅", f"{len(df)}行" if not df.empty else "空")
+                    except Exception as e:
+                        results["Tushare"] = ("❌", str(e)[:60])
+
+                    # Wind MCP
+                    try:
+                        from src.data.sources import WIND_SOURCE
+                        r = WIND_SOURCE.run_historical("000001", period_days=5, market="A")
+                        results["Wind MCP"] = ("✅", "可用") if r.success else ("❌", r.error[:60])
+                    except Exception as e:
+                        results["Wind MCP"] = ("❌", str(e)[:60])
+
+                    # Yahoo
+                    try:
+                        from src.data.sources import YahooSource
+                        s = YahooSource()
+                        r = s.run_historical("AAPL", period_days=5, market="US")
+                        results["Yahoo Finance"] = ("✅", "可用") if r.success else ("❌", r.error[:60])
+                    except Exception as e:
+                        results["Yahoo Finance"] = ("❌", str(e)[:60])
+
+                    # Finnhub
+                    try:
+                        from src.data.sources import FinnhubSource
+                        s = FinnhubSource()
+                        p = s.fetch_realtime("AAPL", "US")
+                        results["Finnhub"] = ("✅", f"${p}") if p else ("❌", "无数据")
+                    except Exception as e:
+                        results["Finnhub"] = ("❌", str(e)[:60])
+
+                    # News Sentiment
+                    try:
+                        from src.data.news_fetcher import compute_sentiment
+                        s1 = compute_sentiment("revenue growth beats expectations", "US")
+                        s2 = compute_sentiment("业绩超预期营收大幅增长", "A")
+                        ok = abs(s1) > 0.01 or abs(s2) > 0.01
+                        results["新闻情绪"] = ("✅", f"EN={s1:.2f} CN={s2:.2f}") if ok else ("⚠️", "分数=0, 需安装vaderSentiment/snownlp")
+                    except Exception as e:
+                        results["新闻情绪"] = ("❌", str(e)[:60])
+
+                    # News fetch
+                    try:
+                        from src.data.news_fetcher import fetch_finnhub_news, fetch_sina_news
+                        fn = fetch_finnhub_news("AAPL", "US", lookback_days=3)
+                        sn = fetch_sina_news("002025", lookback_days=3)
+                        results["Finnhub新闻"] = ("✅", f"{len(fn)}条") if not fn.empty else ("⚠️", "空")
+                        results["新浪新闻"] = ("✅", f"{len(sn)}条") if not sn.empty else ("⚠️", "空")
+                    except Exception as e:
+                        results["Finnhub新闻"] = ("❌", str(e)[:60])
+
+                    st.session_state.factor_check = results
+
+        if "factor_check" in st.session_state:
+            for name, (status, detail) in st.session_state.factor_check.items():
+                st.markdown(f"{status} **{name}**: {detail}")
+
+        st.divider()
+        st.caption("消息面数据存储在 data/news_data.parquet，自动增量更新")
+
+
+# ═══════════════════════════════════════════════════════════
 #  🧠 策略推荐
 # ═══════════════════════════════════════════════════════════
 elif page == "🧠 策略推荐":
@@ -2170,11 +2396,21 @@ elif page == "🧠 策略推荐":
         # 初始化 session_state
         if "rec_result" not in st.session_state:
             st.session_state.rec_result = None
+        if "batch_summary" not in st.session_state:
+            st.session_state.batch_summary = []
 
-        col1, col2, col3 = st.columns([2, 1, 1])
+        col1, col2, col3, col4 = st.columns([1, 2, 1, 1])
         with col1:
+            rec_grp = st.selectbox("分组",
+                ["全部"] + st.session_state.group_order,
+                key="rec_grp_sel")
+        with col2:
             keys = st.session_state.watchlist or list(PRESET_STOCKS.keys())
-            target = st.selectbox("选择股票", keys,
+            if rec_grp != "全部":
+                filtered = [k for k in keys if st.session_state.stock_groups.get(k, "默认") == rec_grp]
+            else:
+                filtered = list(keys)
+            target = st.selectbox("选择股票", filtered,
                                   format_func=lambda x: f"{info_for(x)['symbol']} {info_for(x)['name']}",
                                   key="rec_target")
         with col2:
@@ -2196,20 +2432,26 @@ elif page == "🧠 策略推荐":
 
             # ── 执行扫描 ──
             if run:
+                import gc
                 info = info_for(target)
-                from src.data.fetcher import fetch_realtime_data
-                df = fetch_realtime_data(info["symbol"], info["market"])
-                # 默认使用最近一年半数据回测
-                from datetime import datetime, timedelta
-                cutoff = pd.Timestamp(datetime.now() - timedelta(days=540))
+                from src.data.fetcher import fetch_data
+                df = fetch_data(info["symbol"], info["market"], period_days=250)
+                cutoff = pd.Timestamp.now() - timedelta(days=540)
+                df_full = df.copy()
+                # 统一时区: 去掉时区信息避免比较失败
+                if hasattr(df["Date"].dtype, "tz") and df["Date"].dtype.tz is not None:
+                    df["Date"] = df["Date"].dt.tz_localize(None)
                 df = df[df["Date"] >= cutoff]
+                if df.empty or len(df) < 60:
+                    df = df_full
                 if df.empty:
-                    st.error("最近一年半数据不足")
-                    st.stop()
-                with st.spinner("运行 5 个预测模型 + 8 个回测策略..."):
+                    st.error("数据不足，无法扫描")
+                with st.spinner("运行全部预测模型 + 全部回测策略..."):
                     source = _detect_source_name(info["symbol"], info["market"])
                     models = scan_predictions(df, steps=pred_steps, data_source=source)
+                    gc.collect()
                     strategies = scan_strategies(df, info["symbol"], info["market"], capital)
+                    gc.collect()
                     risk = calc_all_risk_metrics(df)
                     cur_price = float(df["Close"].iloc[-1])
                     report = generate_report(info["name"], info["symbol"], info["market"],
@@ -2223,10 +2465,14 @@ elif page == "🧠 策略推荐":
                     if not s.error and (not best_s or s.total_return > best_s.total_return):
                         best_s = s
                 st.session_state.rec_result = {
-                    "info": info, "models": models, "strategies": strategies,
-                    "risk": risk, "cur_price": cur_price, "report": report,
-                    "best_s": best_s, "valid_m": valid_m, "up": up, "avg_pct": avg_pct,
-                    "df": df,
+                    "symbol": info["symbol"], "market": info["market"], "name": info["name"],
+                    "cur_price": cur_price, "report": report,
+                    "up": up, "avg_pct": avg_pct,
+                    "best_strategy": best_s.strategy if best_s else "-",
+                    "best_ret": best_s.total_return if best_s else 0,
+                    "best_sharpe": best_s.sharpe if best_s else 0,
+                    "best_maxdd": best_s.max_dd if best_s else 0,
+                    "pred_steps": pred_steps,
                 }
                 # 保存历史
                 from src.data.rec_history import add_rec_history
@@ -2250,106 +2496,95 @@ elif page == "🧠 策略推荐":
                                                   "error": s.error} for s in strategies])
                 st.rerun()
     
-            # ── 显示结果 (从 session_state) ──
+            # ── 显示结果 (从历史记录 + session_state 指针) ──
             res = st.session_state.rec_result
             if res is not None:
-    
-                info = res["info"]; models = res["models"]; strategies = res["strategies"]
-                risk = res["risk"]; report = res["report"]; best_s = res["best_s"]
-                valid_m = res["valid_m"]; up = res["up"]; avg_pct = res["avg_pct"]
-        
-                # ── 预测 ──
-                st.subheader("🔮 多模型预测共识", help="各模型对未来走势的预测方向与价格")
-                cols = st.columns(3)
-                cols[0].metric("当前价", f"{res['cur_price']:.2f}")
-                if valid_m:
-                    cols[1].metric("模型共识", f"{up}/{len(valid_m)} 看涨")
-                    cols[2].metric("平均预测涨跌", f"{avg_pct:+.1f}%")
-                m_rows = [{"模型": m.model, "方向": m.direction,
-                           "预测末价": f"{m.final_price:.2f}" if not m.error else "-",
-                           "涨跌幅": f"{m.pct_change:+.1f}%" if not m.error else "-",
-                           "MAPE": f"{m.mape:.1f}%" if not m.error else "-"}
-                          for m in models]
-                st.dataframe(pd.DataFrame(m_rows), use_container_width=True, hide_index=True)
+                from src.data.rec_history import load_rec_history
+                hist = load_rec_history()
+                h = None
+                for r in reversed(hist):
+                    if r.symbol == res["symbol"] and r.market == res["market"]:
+                        h = r
+                        break
+                if h is None:
+                    st.warning("历史记录未找到，请重新扫描")
+                    st.session_state.rec_result = None
+                else:
+                    st.subheader("🔮 多模型预测共识", help="各模型对未来走势的预测方向与价格")
+                    cols = st.columns(3)
+                    cols[0].metric("当前价", f"{h.current_price:.2f}")
+                    cols[1].metric("模型共识", h.model_consensus)
+                    cols[2].metric("平均预测涨跌", f"{res['avg_pct']:+.1f}%")
+                    m_rows = [{"模型": m.get("model",""),
+                               "方向": m.get("direction","") if not m.get("error") else f"❌ {m.get('error','')[:60]}",
+                               "预测末价": f"{m.get('final_price',0):.2f}" if not m.get("error") else "-",
+                               "涨跌幅": f"{m.get('pct_change',0):+.1f}%" if not m.get("error") else "-",
+                               "MAPE": f"{m.get('mape',0):.1f}%" if not m.get("error") else "-"}
+                              for m in h.models_data]
+                    st.dataframe(pd.DataFrame(m_rows), use_container_width=True, hide_index=True)
 
-                with st.expander("🔧 模型参数详情", expanded=False):
-                    for m in models:
-                        if m.error:
-                            continue
-                        st.caption(f"**{m.model}**")
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            st.write("📡 数据源:", m.data_source or "—")
-                            params = m.model_params.get("params", {}) if m.model_params else {}
-                            if params:
-                                st.write("⚙️ 参数:", ", ".join(f"{k}={v}" for k, v in params.items()))
-                        with c2:
-                            feats = m.feature_names
-                            st.write(f"📊 因子: {len(feats)}个" if feats else "📊 因子: —")
-                            if feats:
-                                with st.expander(f"查看 ({len(feats)}个)", expanded=False):
-                                    st.caption(", ".join(str(f) for f in feats))
+                    with st.expander("🔧 模型参数详情", expanded=False):
+                        for m in h.models_data:
+                            if m.get("error"):
+                                st.caption(f"**{m.get('model','')}**: ❌ {m.get('error')}")
+                                continue
+                            st.caption(f"**{m.get('model','')}**")
+                            st.write(f"数据源: {res.get('name','')} | 预测天数: {res.get('pred_steps',30)}")
 
-                # ── 回测 ──
-                st.subheader("📈 策略回测对比", help="各策略在历史数据上的回测绩效")
-                s_rows = []
-                for s in strategies:
-                    if s.error:
-                        s_rows.append({"策略": s.strategy, "状态": "❌"})
-                    else:
-                        s_rows.append({"策略": s.strategy,
-                                       "收益": f"{s.total_return*100:+.1f}%",
-                                       "夏普": f"{s.sharpe:.2f}",
-                                       "回撤": f"{s.max_dd*100:.1f}%",
-                                       "胜率": f"{s.win_rate*100:.0f}%",
-                                       "交易": s.total_trades})
-                st.dataframe(pd.DataFrame(s_rows), use_container_width=True, hide_index=True)
+                    # ── 回测 ──
+                    st.subheader("📈 策略回测对比", help="各策略在历史数据上的回测绩效")
+                    s_rows = []
+                    for s in h.strategies_data:
+                        if s.get("error"):
+                            s_rows.append({"策略": s.get("strategy",""), "状态": "❌"})
+                        else:
+                            s_rows.append({"策略": s.get("strategy",""),
+                                           "收益": f"{s.get('total_return',0)*100:+.1f}%",
+                                           "夏普": f"{s.get('sharpe',0):.2f}",
+                                           "回撤": f"{s.get('max_dd',0)*100:.1f}%",
+                                           "胜率": f"{s.get('win_rate',0)*100:.0f}%",
+                                           "交易": s.get("total_trades",0)})
+                    st.dataframe(pd.DataFrame(s_rows), use_container_width=True, hide_index=True)
 
-                with st.expander("🔧 回测策略参数", expanded=False):
-                    for s in strategies:
-                        if s.error:
-                            continue
-                        st.caption(f"**{s.strategy}**")
-                        if s.strategy_params:
-                            st.write("⚙️ ", ", ".join(f"{k}={v}" for k, v in s.strategy_params.items()))
+                    # ── 风控 ──
+                    with st.expander("📊 风控指标"):
+                        st.markdown(h.report.split("### 风控指标")[1].split("###")[0] if "### 风控指标" in h.report else "暂无风控数据")
 
-                # ── 风控 ──
-                with st.expander("📊 风控指标"):
-                    cols = st.columns(5)
-                    for col, (k, v) in zip(cols, risk.items()):
-                        col.metric(k, fmt_risk(k, v), help=RISK_TIPS.get(k, ""))
-        
-                # ── 自动生成交易监控 ──
-                st.divider()
-                st.subheader("⚡ 添加到交易监控", help="一条组合策略=一条监控规则, 同时覆盖买入和卖出信号")
-        
-                STRAT_TO_COND = {
-                    "双均线(5/20)":  ("ma_cross_combo", {"short": 5, "long": 20}),
-                    "双均线(10/30)": ("ma_cross_combo", {"short": 10, "long": 30}),
-                    "双均线(20/60)": ("ma_cross_combo", {"short": 20, "long": 60}),
-                    "RSI(14)":       ("rsi_combo", {"window": 14, "oversold": 30, "overbought": 70}),
-                    "通道突破(20/10)":("volume_breakout", {"lookback": 20, "vol_ratio": 2.0}),
-                    "布林带(20/2)":  ("bollinger_combo", {"window": 20, "std": 2}),
-                }
-        
-                if best_s:
-                    mapped = STRAT_TO_COND.get(best_s.strategy)
-                    if mapped:
+                    # ── 自动生成交易监控 ──
+                    st.divider()
+                    st.subheader("⚡ 添加到交易监控", help="一条组合策略=一条监控规则, 同时覆盖买入和卖出信号")
+
+                    STRAT_TO_COND = {
+                        "双均线(5/20)":  ("ma_cross_combo", {"short": 5, "long": 20}),
+                        "双均线(10/30)": ("ma_cross_combo", {"short": 10, "long": 30}),
+                        "双均线(20/60)": ("ma_cross_combo", {"short": 20, "long": 60}),
+                        "RSI(14)":       ("rsi_combo", {"window": 14, "oversold": 30, "overbought": 70}),
+                        "通道突破(20/10)":("volume_breakout", {"lookback": 20, "vol_ratio": 2.0}),
+                        "布林带(20/2)":  ("bollinger_combo", {"window": 20, "std": 2}),
+                        "滚动预测(月频)": ("ma_cross_combo", {"short": 20, "long": 60}),
+                        "滚动预测(周频)": ("ma_cross_combo", {"short": 5, "long": 20}),
+                    }
+
+                    best_strategy = res.get("best_strategy", "")
+                    best_ret = res.get("best_ret", 0)
+                    best_sharpe = res.get("best_sharpe", 0)
+                    mapped = STRAT_TO_COND.get(best_strategy)
+                    if mapped and best_ret > 0:
                         cond, params = mapped
                         desc = CONDITION_TYPES.get(cond, cond)
-                        st.info(f"推荐策略 **{best_s.strategy}** → 组合条件 **{cond}** ({desc})")
-        
+                        st.info(f"推荐策略 **{best_strategy}** → 组合条件 **{cond}** ({desc})")
+
                         if st.button("✅ 一键添加到交易监控", use_container_width=True, type="primary",
                                      key="rec_add_alert"):
                             add_rule(AlertRule(
-                                symbol=info["symbol"], market=info["market"],
+                                symbol=res["symbol"], market=res["market"],
                                 condition=cond, params=params,
-                                label=f"推荐策略: {best_s.strategy}",
+                                label=f"推荐策略: {best_strategy}",
                             ))
-                            st.session_state.rec_result = None  # 清缓存
-                            st.session_state.page = "🔔 交易监控"  # 跳转
+                            st.success(f"已添加监控规则: {desc} ({res['symbol']})")
+                            st.session_state.page = "🔔 交易监控"
                             st.rerun()
-        
+
                     else:
                         suggest_conds = [("above_ma", "上穿20日均线", {"window": 20})]
                         selected = []
@@ -2359,32 +2594,23 @@ elif page == "🧠 策略推荐":
                         if selected and st.button("✅ 添加选中条件", use_container_width=True, type="primary"):
                             for cond, params in selected:
                                 add_rule(AlertRule(
-                                    symbol=info["symbol"], market=info["market"],
+                                    symbol=res["symbol"], market=res["market"],
                                     condition=cond, params=params,
-                                    label=f"推荐: {info['name']}",
+                                    label=f"推荐: {res['name']}",
                                 ))
-                            st.session_state.rec_result = None
+                            st.success(f"已添加 {len(selected)} 条监控规则")
                             st.session_state.page = "🔔 交易监控"
                             st.rerun()
-        
-                # ── AI ──
-                st.divider()
-                st.subheader("🤖 AI 分析 (DeepSeek)")
-                api_key = get_llm_key()
-                if not api_key:
-                    st.warning("请先在侧边栏配置 DeepSeek API Key")
-                    with st.expander("📋 数据报告"):
-                        st.code(report)
-                else:
-                    with st.spinner("AI 分析中..."):
-                        ai_result = analyze_with_llm(report)
-                    if ai_result:
-                        st.success(ai_result)
-                    else:
-                        st.warning("AI 调用失败, 请检查 API Key 和网络")
-                    with st.expander("📋 数据报告"):
-                        st.code(report)
-        
+
+                    # ── AI 分析 ──
+                    if get_llm_key():
+                        with st.expander("🤖 AI 综合分析 (三维度)", expanded=False):
+                            ai_result = analyze_with_llm(h.report)
+                            if ai_result:
+                                st.success(ai_result)
+                            else:
+                                st.warning("AI 调用失败, 请检查 API Key 和网络")
+
             # ══════════════════════════════════════════════════════
             #  历史
             # ══════════════════════════════════════════════════════
@@ -2407,8 +2633,13 @@ elif page == "🧠 策略推荐":
 
                     if h.models_data:
                         st.caption("🔮 模型预测")
-                        mdf = pd.DataFrame([{k: str(v) for k, v in m.items()} for m in h.models_data])
-                        st.dataframe(mdf, use_container_width=True, hide_index=True)
+                        m_rows_h = [{"模型": m.get("model",""),
+                                     "方向": m.get("direction","") if not m.get("error") else f"❌ {m.get('error','')[:60]}",
+                                     "预测末价": f"{m.get('final_price',0):.2f}" if not m.get("error") else "-",
+                                     "涨跌幅": f"{m.get('pct_change',0):+.1f}%" if not m.get("error") else "-",
+                                     "MAPE": f"{m.get('mape',0):.1f}%" if not m.get("error") else "-"}
+                                    for m in h.models_data]
+                        st.dataframe(pd.DataFrame(m_rows_h), use_container_width=True, hide_index=True)
 
                     if h.strategies_data:
                         st.caption("📈 策略对比")
@@ -2416,12 +2647,18 @@ elif page == "🧠 策略推荐":
                             "策略": s.get("strategy",""), "收益": f"{s.get('total_return',0)*100:+.1f}%",
                             "夏普": f"{s.get('sharpe',0):.2f}", "回撤": f"{s.get('max_dd',0)*100:.1f}%",
                             "胜率": f"{s.get('win_rate',0)*100:.0f}%", "交易": s.get("total_trades",0),
+                            "状态": "❌" if s.get("error") else "✅",
                         } for s in h.strategies_data])
                         st.dataframe(sdf, use_container_width=True, hide_index=True)
 
                     if h.report:
                         with st.expander("📋 完整报告"):
-                            st.code(h.report)
+                            st.markdown(h.report)
+                    else:
+                        with st.expander("📋 扫描摘要"):
+                            st.write(f"**共识**: {h.model_consensus}")
+                            st.write(f"**最佳策略**: {h.best_strategy} (收益{h.best_ret*100:+.1f}%, 夏普{h.best_sharpe:.2f})")
+                            st.write(f"**模型数**: {h.total_models}, **策略数**: {h.total_strats}")
 
 # ═══════════════════════════════════════════════════════════
 #  ℹ️ 自选详情

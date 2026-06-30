@@ -73,9 +73,9 @@ class LSTMModel(BaseModel):
         self._close_std = float(self._scaler.scale_[self._close_idx])
 
         seq_x, seq_y = [], []
-        for i in range(self.lookback, len(X_full)):
+        for i in range(self.lookback, len(X_full) - 1):
             seq_x.append(X_full[i - self.lookback:i, self._x_to_all])
-            seq_y.append(X_full[i, self._close_idx])
+            seq_y.append(X_full[i + 1, self._close_idx])  # 预测下一个Close
         seq_x = torch.tensor(np.array(seq_x), dtype=torch.float32)
         seq_y = torch.tensor(np.array(seq_y), dtype=torch.float32).unsqueeze(-1)
 

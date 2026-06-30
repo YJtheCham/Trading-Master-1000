@@ -81,14 +81,15 @@ class GBDTModel(BaseModel):
 
         X = data[self._x_cols].values if self._x_cols else data[["Close"]].values
         y = data["Close"].values
+        X, y = X[:-1], y[1:]  # features[t] → predict Close[t+1]
 
         defaults = {"n_estimators": 300, "learning_rate": 0.03, "max_depth": 6,
                      "subsample": 0.8, "random_state": 42}
         params = {**defaults, **(self._tuned_params or {})}
         self._model = GradientBoostingRegressor(**params)
         self._model.fit(X, y)
-        self._last_rows = data[self._all_cols].values.copy()
-        self._last_close = y.copy()
+        self._last_rows = data[self._all_cols].values[:-1].copy()
+        self._last_close = data["Close"].values[1:].copy()
 
     def predict(self, steps: int) -> np.ndarray:
         results = []

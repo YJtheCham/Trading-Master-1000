@@ -27,8 +27,6 @@ from .sources import (
 
 logger = logging.getLogger(__name__)
 
-logger = logging.getLogger(__name__)
-
 # 市场交易时间 (用于缓存判断)
 MARKET_HOURS = {
     "A":  (9, 15),   # 北京时间 15:00 收盘
@@ -74,6 +72,9 @@ def _cache_fresh(cache_path: str, market: str, max_age_hours: int = 24,
                 latest_date = latest
             # 数据最新日期距今超过 3 天 → 不新鲜
             if (now.date() - latest_date).days > 3:
+                return False
+            # 数据最新日期不是今天且距今超过1天 → 不新鲜（需要更新）
+            if (now.date() - latest_date).days >= 1:
                 return False
     except Exception:
         pass
@@ -178,7 +179,7 @@ class WindUnavailableError(ConnectionError):
 
 
 def fetch_realtime_data(symbol: str, market: str, period_days: int = 120) -> pd.DataFrame:
-    """获取实时数据 (仅 Wind MCP), 用于策略推荐 / 交易监控
+    """获取实时数据 (优先 Wind MCP, VPS已部署Wind MCP CLI)
 
     Wind 不可用时抛出 WindUnavailableError, 不回退免费源,
     因为免费源无实时数据, 回退只会掩盖问题.

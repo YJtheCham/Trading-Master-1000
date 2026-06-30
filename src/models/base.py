@@ -80,7 +80,7 @@ class BaseModel(ABC):
 
         train_size = int(n * (1 - test_ratio))
         train_feat = feat_df.iloc[:train_size]
-        test_target = feat_df["Close"].values[train_size:]
+        test_target = feat_df["Close"].values[train_size + 1:]  # 对齐: 预测Close[t+1]
 
         self.train(train_feat)
         test_forecast = self.predict(n - train_size)
@@ -164,7 +164,8 @@ class BaseModel(ABC):
             print(f"  测试集: {test_idx[0]}-{test_idx[-1]} ({len(test_idx)} 条)")
             
             train_df = feat_df.iloc[train_idx]
-            test_target = feat_df["Close"].values[test_idx]
+            shifted_idx = np.clip(test_idx + 1, 0, n - 1)  # 预测Close[t+1]
+            test_target = feat_df["Close"].values[shifted_idx]
             
             self.train(train_df)
             test_forecast = self.predict(len(test_idx))

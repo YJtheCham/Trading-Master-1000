@@ -47,21 +47,30 @@ def get_tushare_token() -> str:
 
 
 def get_llm_key() -> str:
-    """LLM API Key (DeepSeek)"""
     import os
-    key = os.environ.get("DEEPSEEK_API_KEY", "") or os.environ.get("LLM_API_KEY", "")
+    key = os.environ.get("LLM_API_KEY", "")
     if key:
         return key
-    return load_config().get("llm_api_key", "")
+    cfg = load_config()
+    key = cfg.get("llm_api_key", "")
+    if key:
+        return key
+    return cfg.get("vps_api_key", "")
 
 
 def get_llm_config() -> dict:
     """LLM 配置"""
     cfg = load_config()
+    base_url = cfg.get("llm_base_url", "")
+    if not base_url:
+        base_url = "https://api.deepseek.com/v1"
+    model = cfg.get("llm_model", "")
+    if not model:
+        model = "deepseek-chat"
     return {
         "api_key": get_llm_key(),
-        "base_url": cfg.get("llm_base_url", "https://api.deepseek.com/v1"),
-        "model": cfg.get("llm_model", "deepseek-chat"),
+        "base_url": base_url,
+        "model": model,
     }
 
 

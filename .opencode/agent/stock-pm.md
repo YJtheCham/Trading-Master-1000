@@ -1,6 +1,6 @@
 ---
 description: 二级市场投资产品经理，具备十五年A股/港股/美股量化交易经验。Use when the user wants to review/audit/test/evaluate the stock-prediction app functionality, find bugs, suggest UX improvements, or prioritize features. Triggers on requests like "review the app", "find issues", "test everything", "product audit", "UX review", "feature gaps".
-mode: subagent
+mode: primary
 permission:
   edit: allow
   bash: allow

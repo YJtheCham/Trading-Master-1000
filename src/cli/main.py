@@ -654,5 +654,71 @@ def dispatch(message):
     console.print(reply)
 
 
+@cli.command("batch-scan")
+@click.option("--stocks", "-s", default=None,
+              help="股票列表, 格式: 301123:A:奕东电子,688519:A:南亚新材")
+@click.option("--file", "-f", default=None, type=click.Path(exists=True),
+              help="从文件读取股票列表 (每行一个: 代码:市场:名称)")
+@click.option("--watchlist", "-w", is_flag=True,
+              help="对已有自选股列表跑批量扫描")
+@click.option("--steps", "-S", default=30, help="预测天数")
+@click.option("--capital", "-c", default=100000, help="回测初始资金")
+@click.option("--no-import", is_flag=True,
+              help="不导入自选列表 (仅扫描)")
+@click.option("--fast", is_flag=True,
+              help="快速模式: 轻量模型+轻量策略")
+@click.option("--all-strats", is_flag=True,
+              help="所有股票都跑全量策略 (看涨+看跌)")
+def batch_scan_cmd(stocks, file, watchlist, steps, capital, no_import, fast, all_strats):
+    """批量扫描: 导入自选 → 全量预测 → 策略推荐 → 评分排名
+
+    用法:
+      stock batch-scan -s "301123:A:奕东电子,688519:A:南亚新材"
+      stock batch-scan -f stocks.txt
+      stock batch-scan -w                    (扫描已有自选)
+      stock batch-scan -w --fast             (轻量模式)
+    """
+    from src.recommend.batch_scan import parse_stocks_arg, parse_stocks_file, batch_scan
+
+    stock_list = []
+
+    if stocks:
+        stock_list = parse_stocks_arg(stocks)
+    elif file:
+        stock_list = parse_stocks_file(file)
+    elif watchlist:
+        items = load_watchlist()
+        stock_list = [(i.symbol, i.market, i.name or "") for i in items]
+    else:
+        console.print("[red]请指定股票: --stocks / --file / --watchlist[/red]")
+        return
+
+    if not stock_list:
+        console.print("[yellow]股票列表为空[/yellow]")
+        return
+
+    console.print(f"[bold]扫描 {len(stock_list)} 只股票[/bold]")
+
+    results, summary, reports = batch_scan(
+        stocks=stock_list,
+        steps=steps,
+        capital=capital,
+        import_to_watchlist_flag=not no_import,
+        run_all_models=not fast,
+        run_all_strategies=not fast,
+        bullish_only_strategies=not all_strats,
+    )
+
+    recommended = [r for r in results if r["tag"] in ("强烈推荐", "值得关注")]
+    console.print()
+    console.print(f"[bold green]=== 扫描完成 ===[/bold green]")
+    console.print(f"推荐标的: {len(recommended)} 只")
+    for r in recommended:
+        console.print(f"  [green]{r['name']}[/green] ({r['market']}:{r['code']}) "
+                      f"涨幅{r['avg_pct_change']:+.1f}% 共识{r['consensus']} "
+                      f"策略{r['best_strategy']} 收益{r['best_return']*100:+.1f}%")
+    console.print(f"\n完整报告: data/batch_scan/summary.txt")
+
+
 if __name__ == "__main__":
     cli()

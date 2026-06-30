@@ -1,0 +1,44 @@
+[
+  {
+    "code": "002025",
+    "name": "航天电器",
+    "market": "A",
+    "current_price": 60.18,
+    "avg_pct_change": 1.8180131760692717,
+    "consensus": "4/5",
+    "model_count": 5,
+    "best_strategy": "RSI(14)",
+    "best_return": 0.35111880494710085,
+    "best_sharpe": 0.7753520510631751,
+    "score": 76.51301849035917,
+    "tag": "值得关注"
+  },
+  {
+    "code": "688519",
+    "name": "南亚新材",
+    "market": "A",
+    "current_price": 375.9175,
+    "avg_pct_change": 1.1792747876973813,
+    "consensus": "3/5",
+    "model_count": 5,
+    "best_strategy": "双均线(10/30)",
+    "best_return": 3.204550918775488,
+    "best_sharpe": 1.9065099724342798,
+    "score": 75.76959660448226,
+    "tag": "值得关注"
+  },
+  {
+    "code": "688549",
+    "name": "中巨芯",
+    "market": "A",
+    "current_price": 34.384375,
+    "avg_pct_change": -1.6063294003198678,
+    "consensus": "1/5",
+    "model_count": 5,
+    "best_strategy": "双均线(5/20)",
+    "best_return": 0.0,
+    "best_sharpe": 0.0,
+    "score": 39.99604412480008,
+    "tag": "暂不推荐"
+  }
+]

@@ -1,9 +1,10 @@
 """
 LLM 策略顾问: DeepSeek API (OpenAI 兼容) + stock-skill 视角
 """
-import logging, json
+import logging, json, urllib3
 from typing import Optional
 
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 SYSTEM_PROMPT = """你是量化分析助手, 综合技术/宏观/基本面三维度分析交易策略。
@@ -24,7 +25,8 @@ SYSTEM_PROMPT = """你是量化分析助手, 综合技术/宏观/基本面三维
 def call_llm(report: str, api_key: str,
              base_url: str = "https://api.deepseek.com/v1",
              model: str = "deepseek-chat",
-             timeout: int = 60) -> Optional[str]:
+             timeout: int = 60,
+             system_prompt: str = SYSTEM_PROMPT) -> Optional[str]:
     """调用 DeepSeek API (OpenAI 兼容格式)"""
     import requests
 
@@ -39,7 +41,7 @@ def call_llm(report: str, api_key: str,
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": report},
         ],
         "temperature": 0.7,
@@ -47,10 +49,15 @@ def call_llm(report: str, api_key: str,
     }
 
     try:
-        resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+        resp = requests.post(url, json=payload, headers=headers, timeout=timeout,
+                             verify=False)
         if resp.status_code == 200:
             data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            choices = data.get("choices") or []
+            if not choices or not choices[0].get("message"):
+                logger.warning(f"LLM 返回空 choices: {json.dumps(data)[:200]}")
+                return None
+            return choices[0]["message"].get("content", "")
         else:
             logger.warning(f"LLM API 返回 {resp.status_code}: {resp.text[:200]}")
             return f"LLM 调用失败 (HTTP {resp.status_code})"

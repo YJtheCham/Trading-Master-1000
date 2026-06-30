@@ -56,6 +56,7 @@ body{BG;font-family:-apple-system,BlinkMacSystemFont,sans-serif;padding:6px;-web
 .mn{display:flex;gap:4px;margin-top:8px}
 .mn input{flex:1;padding:4px 8px;border-radius:6px;border:1px solid BR;background:BG;color:FG;font-size:.78rem;outline:none}
 .mn button{padding:4px 10px;border-radius:6px;background:TBG;color:TFG;border:none;cursor:pointer;font-size:.75rem}
+.group-header{width:100%;display:flex;justify-content:space-between;align-items:center;padding:5px 10px 5px 14px;margin:8px 0 0;border-left:3px solid BH;border-bottom:1px solid BR;font-size:.7rem;color:MU;user-select:none}
 @media(max-width:768px){.card{width:calc(50% - 6px);min-width:0;padding:8px 6px}.price{font-size:1rem}.name,.date{font-size:.68rem}}
 </style></head><body>
 <div class="grid" id="g"></div>
@@ -65,9 +66,19 @@ var I=ITEMS,G=GRPS,M=MON,dS=null,drg=false,sX=0,sY=0;
 function el(t,c){var e=document.createElement(t);if(c)e.className=c;return e}
 function tx(t){return document.createTextNode(t)}
 function send(v){window.parent.postMessage({isStreamlitMessage:true,type:'streamlit:setComponentValue',value:v},'*')}
+function ge(s){s=(s||"").toLowerCase();if(s.indexOf("半导体")>=0||s.indexOf("芯片")>=0)return"🧊";if(s.indexOf("元器件")>=0||s.indexOf("电子")>=0)return"⚡";if(s.indexOf("通信")>=0||s.indexOf("光纤")>=0)return"📡";if(s.indexOf("电气")>=0||s.indexOf("电力")>=0||s.indexOf("水电")>=0)return"🔌";if(s.indexOf("机械")>=0||s.indexOf("设备")>=0)return"⚙️";if(s.indexOf("港股")>=0)return"🇭🇰";if(s.indexOf("金属")>=0||s.indexOf("铅锌")>=0)return"⛏️";if(s.indexOf("化工")>=0)return"🧪";if(s.indexOf("玻璃")>=0||s.indexOf("陶瓷")>=0)return"🪞";if(s.indexOf("医疗")>=0||s.indexOf("药")>=0)return"💊";if(s.indexOf("能源")>=0||s.indexOf("供热")>=0)return"🔥";if(s.indexOf("建筑")>=0||s.indexOf("装修")>=0)return"🏗️";if(s.indexOf("日用")>=0)return"🛒";if(s.indexOf("默认")>=0)return"📋";return"📌"}
 function rn(){
   g.innerHTML="";
+  var pg=null,gc={};
+  I.forEach(function(c){var gk=c.group||"默认";gc[gk]=(gc[gk]||0)+1});
   I.forEach(function(c,i){
+    var grp=c.group||"默认";
+    if(grp!==pg){
+      var gh=el("div","group-header");
+      gh.innerHTML='<span>'+ge(grp)+' '+grp+'</span><span>'+gc[grp]+'只</span>';
+      g.appendChild(gh);
+      pg=grp;
+    }
     var ch=+c.change||0,cl=ch>=0?"#26a69a":"#ef5350",m=M.indexOf(c.key)>=0;
     var d=el("div","card"+(m?" monitored":""));
     d.draggable=true;d.dataset.idx=i;

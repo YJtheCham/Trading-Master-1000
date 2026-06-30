@@ -46,6 +46,9 @@ class AlertRule:
     created_at: str = field(
         default_factory=lambda: datetime.now().isoformat(timespec="minutes"))
     last_triggered: Optional[str] = None
+    last_pushed: Optional[str] = None
+    push_count_today: int = 0
+    push_date: Optional[str] = None
 
     @property
     def uid(self) -> str:

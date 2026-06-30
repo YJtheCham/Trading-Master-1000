@@ -62,6 +62,19 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     # ── A7. 量价相关性 ──
     feats["price_vol_corr"] = _rolling_corr(close, vol, 10)
 
+    # ── A8. 新闻情绪因子 ── (需 news_fetcher 先合并到 df)
+    if "news_sent_mean" in df.columns:
+        feats["news_sent_mean"] = df["news_sent_mean"].values
+        feats["news_sent_std"] = df["news_sent_std"].values
+        feats["news_count"] = df["news_count"].fillna(0).values
+        sent_arr = feats["news_sent_mean"]
+        feats["news_momentum_5d"] = _pct_change(sent_arr, 5)
+    else:
+        feats["news_sent_mean"] = np.zeros(n)
+        feats["news_sent_std"] = np.zeros(n)
+        feats["news_count"] = np.zeros(n)
+        feats["news_momentum_5d"] = np.zeros(n)
+
     # ── B1. RSI (14) ──
     feats["rsi_14"] = _rsi(close, 14)
 

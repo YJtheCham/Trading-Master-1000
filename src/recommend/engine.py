@@ -34,10 +34,15 @@ class StrategyResult:
     strategy_params: dict = field(default_factory=dict)
 
 
-def scan_predictions(df: pd.DataFrame, steps: int = 30, data_source: str = "") -> list[ModelResult]:
-    """运行全部预测模型, 返回结果列表"""
+def scan_predictions(df: pd.DataFrame, steps: int = 30, data_source: str = "",
+                     light: bool = False) -> list[ModelResult]:
+    """运行预测模型, light=True 跳过 LSTM/Transformer (省内存)"""
     from src.models.factory import run_models
-    results = run_models(df, steps=steps, data_source=data_source)
+    if light:
+        model_names = ["arima", "gbdt", "xgboost"]
+    else:
+        model_names = None  # all models
+    results = run_models(df, steps=steps, data_source=data_source, model_names=model_names)
     output = []
     for name, r in results.items():
         mr = ModelResult(model=name)
@@ -56,8 +61,9 @@ def scan_predictions(df: pd.DataFrame, steps: int = 30, data_source: str = "") -
     return output
 
 
-def scan_strategies(df: pd.DataFrame, symbol: str, market: str, capital: float) -> list[StrategyResult]:
-    """运行全部回测策略, 返回结果列表"""
+def scan_strategies(df: pd.DataFrame, symbol: str, market: str, capital: float,
+                    light: bool = False) -> list[StrategyResult]:
+    """运行全部回测策略, 返回结果列表. light=True 跳过滚动预测(省内存)"""
     from src.backtesting.engine import BacktestEngine
     from src.backtesting.models import BacktestConfig
     from src.backtesting.strategies import (
@@ -66,6 +72,7 @@ def scan_strategies(df: pd.DataFrame, symbol: str, market: str, capital: float) 
         RollingPredictionStrategy,
     )
     from src.models.gbdt import GBDTModel
+    import gc
 
     cfg = BacktestConfig(initial_capital=capital, market=market)
     strategies = [
@@ -75,13 +82,16 @@ def scan_strategies(df: pd.DataFrame, symbol: str, market: str, capital: float) 
         ("RSI(14)",       RSIStrategy(14, 30, 70)),
         ("通道突破(20/10)", ChannelBreakoutStrategy(20, 10)),
         ("布林带(20/2)",   BollingerStrategy(20, 2)),
-        ("滚动预测(月频)", RollingPredictionStrategy(
-            GBDTModel(), warmup=200, retrain_freq=20,
-            threshold_buy=0.015, threshold_sell=-0.015)),
-        ("滚动预测(周频)", RollingPredictionStrategy(
-            GBDTModel(), warmup=200, retrain_freq=5,
-            threshold_buy=0.01, threshold_sell=-0.01)),
     ]
+    if not light:
+        strategies.extend([
+            ("滚动预测(月频)", RollingPredictionStrategy(
+                GBDTModel(), warmup=200, retrain_freq=20,
+                threshold_buy=0.015, threshold_sell=-0.015)),
+            ("滚动预测(周频)", RollingPredictionStrategy(
+                GBDTModel(), warmup=200, retrain_freq=5,
+                threshold_buy=0.01, threshold_sell=-0.01)),
+        ])
 
     output = []
     for name, strat in strategies:

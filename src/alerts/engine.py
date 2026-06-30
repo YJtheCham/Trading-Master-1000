@@ -1,7 +1,6 @@
 """
 监控引擎: 定时检查告警规则并触发通知 (并行查询)
 """
-import concurrent.futures
 import json
 import logging
 import time
@@ -19,7 +18,7 @@ from .health import record_check, get_health, summary
 logger = logging.getLogger(__name__)
 
 RULES_FILE = Path(__file__).resolve().parent.parent.parent / "data" / "alert_rules.json"
-_rules_lock = threading.Lock()
+_rules_lock = threading.RLock()
 
 
 # ─── 规则持久化 ───────────────────────────────────────────
@@ -43,6 +42,11 @@ def save_rules(rules: list[AlertRule]):
 def add_rule(rule: AlertRule) -> AlertRule:
     with _rules_lock:
         rules = load_rules()
+        for r in rules:
+            if r.symbol == rule.symbol and r.market == rule.market \
+               and r.condition == rule.condition and r.params == rule.params:
+                logger.info(f"规则已存在, 跳过添加: {rule.uid}")
+                return r
         rules.append(rule)
         save_rules(rules)
     return rule
@@ -67,6 +71,54 @@ def toggle_rule(uid: str, enabled: Optional[bool] = None) -> Optional[AlertRule]
     return None
 
 
+PUSH_COOLDOWN_MINUTES = 30
+PUSH_DAILY_LIMIT = 5
+
+
+def _can_push(rule: AlertRule) -> bool:
+    """检查推送限制: 同一规则30分钟内最多推送1次, 每天最多5次"""
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+
+    # 重置每日计数
+    if rule.push_date != today:
+        rule.push_count_today = 0
+        rule.push_date = today
+
+    # 每日上限
+    if rule.push_count_today >= PUSH_DAILY_LIMIT:
+        logger.info(f"{rule.uid} 每日推送上限({PUSH_DAILY_LIMIT})已达到, 跳过推送")
+        return False
+
+    # 30分钟冷却
+    if rule.last_pushed:
+        last_push = datetime.fromisoformat(rule.last_pushed)
+        if now - last_push < timedelta(minutes=PUSH_COOLDOWN_MINUTES):
+            remaining = PUSH_COOLDOWN_MINUTES - int((now - last_push).total_seconds() / 60)
+            logger.info(f"{rule.uid} 推送冷却中({remaining}分钟后可推送), 跳过推送")
+            return False
+
+    return True
+
+
+def _mark_pushed(rule: AlertRule) -> None:
+    """线程安全: 记录推送时间和计数"""
+    now = datetime.now()
+    today = now.strftime("%Y-%m-%d")
+    with _rules_lock:
+        rules = load_rules()
+        for r in rules:
+            if r.uid == rule.uid:
+                r.last_pushed = now.isoformat(timespec="seconds")
+                if r.push_date != today:
+                    r.push_count_today = 1
+                    r.push_date = today
+                else:
+                    r.push_count_today += 1
+                break
+        save_rules(rules)
+
+
 def _mark_triggered(rule: AlertRule, triggered_at: str):
     """线程安全: 记录规则触发时间"""
     with _rules_lock:
@@ -78,37 +130,49 @@ def _mark_triggered(rule: AlertRule, triggered_at: str):
         save_rules(rules)
 
 
-def _check_single_rule(rule: AlertRule) -> None:
-    """在独立线程中检查单条规则"""
+def _check_rules_batch(to_check: list[AlertRule]) -> None:
+    """批量检查规则: 同一股票只调一次Wind MCP, 然后检查该股票的所有规则"""
     from src.data.fetcher import fetch_realtime_data
-    t0 = time.monotonic()
-    try:
-        df = fetch_realtime_data(rule.symbol, rule.market, period_days=120)
-        elapsed_ms = (time.monotonic() - t0) * 1000
-        if df.empty or len(df) < 5:
-            record_check("monitor", rule.symbol, rule.market,
-                         success=False, error="数据为空或不足5条",
-                         latency_ms=elapsed_ms)
-            return
-        record_check("monitor", rule.symbol, rule.market,
-                     success=True, latency_ms=elapsed_ms)
-    except Exception as e:
-        elapsed_ms = (time.monotonic() - t0) * 1000
-        record_check("monitor", rule.symbol, rule.market,
-                     success=False, error=str(e)[:100],
-                     latency_ms=elapsed_ms)
-        return
+    from collections import defaultdict
 
-    triggered, message, action = evaluate(rule, df)
-    if triggered:
-        event = AlertEvent(
-            rule=rule,
-            current_price=float(df["Close"].iloc[-1]),
-            message=message,
-            action=action,
-        )
-        notify(event)
-        _mark_triggered(rule, event.triggered_at)
+    # 按 (symbol, market) 分组
+    groups: dict[tuple[str, str], list[AlertRule]] = defaultdict(list)
+    for rule in to_check:
+        groups[(rule.symbol, rule.market)].append(rule)
+
+    for (symbol, market), rules in groups.items():
+        t0 = time.monotonic()
+        try:
+            df = fetch_realtime_data(symbol, market, period_days=120)
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            if df.empty or len(df) < 5:
+                record_check("monitor", symbol, market,
+                             success=False, error="数据为空或不足5条",
+                             latency_ms=elapsed_ms)
+                continue
+            record_check("monitor", symbol, market,
+                         success=True, latency_ms=elapsed_ms)
+        except Exception as e:
+            elapsed_ms = (time.monotonic() - t0) * 1000
+            record_check("monitor", symbol, market,
+                         success=False, error=str(e)[:100],
+                         latency_ms=elapsed_ms)
+            continue
+
+        # 用同一份数据检查该股票的所有规则
+        for rule in rules:
+            triggered, message, action = evaluate(rule, df)
+            if triggered:
+                _mark_triggered(rule, datetime.now().isoformat(timespec="seconds"))
+                if _can_push(rule):
+                    event = AlertEvent(
+                        rule=rule,
+                        current_price=float(df["Close"].iloc[-1]),
+                        message=message,
+                        action=action,
+                    )
+                    notify(event)
+                    _mark_pushed(rule)
 
 
 def _check_connection_alert():
@@ -128,7 +192,25 @@ class AlertEngine:
 
     @property
     def is_running(self) -> bool:
-        return self._running
+        # Check in-memory flag first
+        if self._running:
+            return True
+        # Fallback: check status file written by daemon process
+        try:
+            from pathlib import Path
+            import json
+            status_file = Path(__file__).resolve().parent.parent.parent / "data" / "monitor_status.json"
+            if status_file.exists():
+                data = json.loads(status_file.read_text())
+                # Consider running if status file says so and was updated within 5 minutes
+                if data.get("running"):
+                    from datetime import datetime
+                    ts = datetime.fromisoformat(data.get("timestamp", "2000-01-01"))
+                    if (datetime.now() - ts).total_seconds() < 300:  # 5 min
+                        return True
+        except Exception:
+            pass
+        return False
 
     def start(self):
         if self._running:
@@ -137,10 +219,28 @@ class AlertEngine:
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
         log_to_file(f"[{datetime.now().isoformat()}] 监控引擎启动")
+        # Write status file for cross-process communication
+        self._write_status(True)
 
     def stop(self):
         self._running = False
         log_to_file(f"[{datetime.now().isoformat()}] 监控引擎停止")
+        # Write status file for cross-process communication
+        self._write_status(False)
+
+    def _write_status(self, running: bool):
+        """Write running status to file for cross-process communication"""
+        try:
+            from pathlib import Path
+            status_file = Path(__file__).resolve().parent.parent.parent / "data" / "monitor_status.json"
+            import json
+            status_file.write_text(json.dumps({
+                "running": running,
+                "timestamp": datetime.now().isoformat(),
+                "pid": None  # Will be filled by actual daemon process
+            }))
+        except Exception:
+            pass
 
     def _loop(self):
         while self._running:
@@ -174,10 +274,8 @@ class AlertEngine:
         if not to_check:
             return
 
-        # Wind MCP 单次 ~6s, 3 workers 并行 → 6条规则 ~12s
-        max_workers = min(3, len(to_check))
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as pool:
-            pool.map(_check_single_rule, to_check)
+        # 按股票分组, 同股多条规则共享一次Wind MCP调用
+        _check_rules_batch(to_check)
 
         _check_connection_alert()
 

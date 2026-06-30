@@ -4,7 +4,7 @@
 用法: python3 tools/monitor_daemon.py
 终止: Ctrl+C
 """
-import sys, time, signal
+import sys, time, signal, os
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -30,9 +30,31 @@ rules = load_rules()
 print(f"   时段: {settings.summary}")
 print(f"   规则: {len(rules)} 条 (启用 {sum(1 for r in rules if r.enabled)} 条)")
 
+# Update status file with PID
+try:
+    import json
+    from datetime import datetime
+    status_file = Path(__file__).resolve().parent / "data" / "monitor_status.json"
+    status_file.write_text(json.dumps({
+        "running": True,
+        "timestamp": datetime.now().isoformat(),
+        "pid": os.getpid()
+    }))
+except Exception:
+    pass
+
 try:
     while running:
-        time.sleep(10)
+        # Update timestamp every minute
+        try:
+            status_file.write_text(json.dumps({
+                "running": True,
+                "timestamp": datetime.now().isoformat(),
+                "pid": os.getpid()
+            }))
+        except Exception:
+            pass
+        time.sleep(60)
 except KeyboardInterrupt:
     pass
 

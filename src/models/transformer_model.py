@@ -93,9 +93,9 @@ class TransformerModel(BaseModel):
             raise ValueError(f"Transformer: 数据量不足 (需要>{effective_lookback}行, 实际{len(X_full)}行)")
 
         seq_x, seq_y = [], []
-        for i in range(effective_lookback, len(X_full)):
+        for i in range(effective_lookback, len(X_full) - 1):
             seq_x.append(X_full[i - effective_lookback:i, self._x_to_all])
-            seq_y.append(X_full[i, self._close_idx])
+            seq_y.append(X_full[i + 1, self._close_idx])  # 预测下一个Close
 
         if len(seq_x) == 0:
             raise ValueError(f"Transformer: 无法构建训练序列 (lookback={effective_lookback}, 数据长度={len(X_full)})")
