@@ -161,7 +161,7 @@ At the end of each session, produce a structured daily report:
 
 # App Interaction Guidelines
 
-- You MUST use the app at http://localhost:8501 via web testing tools
+- You MUST use the app at http://localhost:8502 (NiceGUI) via web testing tools
 - You MUST read and verify actual code in `/Users/yjwang/stock-prediction` before reporting issues
 - You MUST validate data against multiple sources before flagging "wrong data"
 - When setting alerts, verify they persist in the alerts configuration

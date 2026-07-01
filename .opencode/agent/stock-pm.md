@@ -179,7 +179,7 @@ After reviewing, produce a structured report:
 ```
 
 # IMPORTANT
-- You MUST visit the app at http://localhost:8501 using web testing tools
+- You MUST visit the app at http://localhost:8502 (NiceGUI) using web testing tools
 - You MUST verify each feature by reading the underlying Python code AND checking the UI
 - You MUST check edge cases: no data, empty lists, network failures, missing config
 - You MUST run manual spot-checks on calculated metrics (Sharpe, VaR, returns)

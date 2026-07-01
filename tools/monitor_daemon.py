@@ -34,7 +34,7 @@ print(f"   规则: {len(rules)} 条 (启用 {sum(1 for r in rules if r.enabled)}
 try:
     import json
     from datetime import datetime
-    status_file = Path(__file__).resolve().parent / "data" / "monitor_status.json"
+    status_file = Path(__file__).resolve().parent.parent / "data" / "monitor_status.json"
     status_file.write_text(json.dumps({
         "running": True,
         "timestamp": datetime.now().isoformat(),
@@ -59,4 +59,13 @@ except KeyboardInterrupt:
     pass
 
 engine.stop()
+# Mark as stopped in status file
+try:
+    status_file.write_text(json.dumps({
+        "running": False,
+        "timestamp": datetime.now().isoformat(),
+        "pid": os.getpid()
+    }))
+except Exception:
+    pass
 print("👋 监控已停止")

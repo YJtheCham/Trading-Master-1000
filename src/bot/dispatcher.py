@@ -147,25 +147,42 @@ def _action_remove_stock(args: str) -> str:
 def _action_watchlist(args: str) -> str:
     """查看自选股列表: /watchlist"""
     from src.data.fetcher import load_watchlist, fetch_data
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time
 
     items = load_watchlist()
     if not items:
         return "⚠️ 自选列表为空，使用 /add 添加股票"
 
-    lines = []
-    for i in items:
-        try:
-            df = fetch_data(i.symbol, i.market, period_days=5, use_cache=True)
-            if not df.empty:
-                price = float(df["Close"].iloc[-1])
-                prev = float(df["Close"].iloc[-2]) if len(df) > 1 else price
-                change = (price - prev) / prev * 100
-                lines.append(f"{i.name}({i.market}:{i.symbol}) {price:.2f} {change:+.1f}%")
-            else:
-                lines.append(f"{i.name}({i.market}:{i.symbol}) 暂无数据")
-        except Exception:
-            lines.append(f"{i.name}({i.market}:{i.symbol}) 数据获取失败")
+    start_time = time.time()
+    results = {}
 
+    def fetch_one(i):
+        try:
+            df = fetch_data(i.symbol, i.market, period_days=2, use_cache=True)
+            if not df.empty and len(df) >= 2:
+                price = float(df["Close"].iloc[-1])
+                prev = float(df["Close"].iloc[-2])
+                change = (price - prev) / prev * 100
+                return i.symbol, f"{i.name}({i.market}:{i.symbol}) {price:.2f} {change:+.1f}%"
+            else:
+                return i.symbol, f"{i.name}({i.market}:{i.symbol}) 暂无数据"
+        except Exception:
+            return i.symbol, f"{i.name}({i.market}:{i.symbol}) 数据获取失败"
+
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = {executor.submit(fetch_one, i): i for i in items}
+        for future in as_completed(futures, timeout=25):
+            if time.time() - start_time > 25:
+                break
+            try:
+                sym, line = future.result(timeout=3)
+                results[sym] = line
+            except Exception:
+                i = futures[future]
+                results[i.symbol] = f"{i.name}({i.market}:{i.symbol}) 获取超时"
+
+    lines = [results.get(i.symbol, f"{i.name}({i.market}:{i.symbol}) 未获取") for i in items]
     header = f"📋 自选股列表 ({len(items)}只)\n"
     return header + "\n".join(lines)
 

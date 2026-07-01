@@ -60,11 +60,70 @@ def risk_page(state):
 
 @ui.refreshable
 def monitor_page(state):
-    with ui.tabs() as tabs: t1,t2,t3 = ui.tab("📋 规则列表"), ui.tab("➕ 添加规则"), ui.tab("⚙️ 设置")
-    with ui.tab_panels(tabs, value=t1):
-        with ui.tab_panel(t1): _mr(state)
-        with ui.tab_panel(t2): _ma(state)
-        with ui.tab_panel(t3): _ms(state)
+    with ui.tabs() as tabs:
+        t_conn, t_rules, t_add, t_set = ui.tab("📡 连接状态"), ui.tab("📋 规则列表"), ui.tab("➕ 添加规则"), ui.tab("⚙️ 设置")
+    with ui.tab_panels(tabs, value=t_conn):
+        with ui.tab_panel(t_conn): _mc(state)
+        with ui.tab_panel(t_rules): _mr(state)
+        with ui.tab_panel(t_add): _ma(state)
+        with ui.tab_panel(t_set): _ms(state)
+
+
+def _mc(state):
+    """连接状态监控面板"""
+    from src.alerts.health import summary as health_summary, get_health
+
+    hs = health_summary()
+    recent = get_health().recent(60)
+
+    status_map = {
+        "ok": ("🟢 正常", "text-positive"),
+        "degraded": ("🟡 降级", "text-orange"),
+        "down": ("🔴 断连", "text-negative"),
+        "unknown": ("⚪ 未知", "text-grey"),
+    }
+    status_label, status_cls = status_map.get(hs["status"], ("⚪ 未知", "text-grey"))
+
+    ui.label("📡 数据源连接状态监控").classes("text-h6 q-mb-sm")
+
+    with ui.row().classes("w-full q-mb-sm items-center"):
+        with ui.card().classes("q-pa-sm"):
+            ui.label("状态").classes("text-caption text-grey")
+            ui.label(status_label).classes(f"text-subtitle2 {status_cls}")
+        with ui.card().classes("q-pa-sm"):
+            ui.label("近1h查询").classes("text-caption text-grey")
+            ui.label(str(hs["recent_checks"])).classes("text-subtitle2")
+        with ui.card().classes("q-pa-sm"):
+            ui.label("成功率").classes("text-caption text-grey")
+            ui.label(f"{hs['success_rate']}%").classes("text-subtitle2")
+        with ui.card().classes("q-pa-sm"):
+            fail = hs["consecutive_failures"]
+            ui.label("连续失败").classes("text-caption text-grey")
+            ui.label(f"⚠️ {fail}" if fail > 0 else "0").classes("text-subtitle2")
+        with ui.card().classes("q-pa-sm"):
+            lat = hs.get("avg_latency_ms", 0)
+            ui.label("平均延迟").classes("text-caption text-grey")
+            ui.label(f"{lat:.0f}ms" if lat else "-").classes("text-subtitle2")
+
+    if hs.get("last_error"):
+        ui.label(f"⚠️ 最近错误: {hs['last_error']}").classes("text-caption text-negative q-mb-sm")
+
+    with ui.row().classes("q-mb-sm"):
+        ui.button("🔄 刷新", on_click=monitor_page.refresh, icon="refresh").props("flat dense color=primary")
+
+    if recent:
+        with ui.expansion("📋 最近查询记录", icon="list").classes("w-full"):
+            import pandas as pd
+            df = pd.DataFrame(reversed(recent))
+            display_cols = ["checked_at", "symbol", "market", "success", "latency_ms", "error"]
+            show_cols = [c for c in display_cols if c in df.columns]
+            df = df[show_cols].head(30)
+            renames = {
+                "checked_at": "时间", "symbol": "代码", "market": "市场",
+                "success": "成功", "latency_ms": "延迟(ms)", "error": "错误"
+            }
+            df = df.rename(columns=renames)
+            ui.table.from_pandas(df).props("dense flat")
 
 
 def _mr(state):

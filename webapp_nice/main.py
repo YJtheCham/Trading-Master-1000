@@ -120,7 +120,7 @@ def finish_progress(task_id: str, success: bool = True, message: str = ""):
 
 
 # ─── Navigation ──────────────────────────────────────────────
-def build_nav():
+def build_nav(dark_element=None):
     state = init_state()
     drawer_open = state.get("drawer_open", True)
 
@@ -193,7 +193,7 @@ def build_nav():
             ui.button(icon="add_circle", on_click=lambda: _show_add_stock_dialog(state)).props("flat dense")
             ui.button(icon="refresh", on_click=lambda: (clear_all_caches(), refresh_current())).props("flat dense")
             theme_icon = "dark_mode" if state.get("dark_mode") else "light_mode"
-            ui.button(icon=theme_icon, on_click=lambda: toggle_theme(state)).props("flat dense")
+            ui.button(icon=theme_icon, on_click=lambda: toggle_theme(state, dark_element)).props("flat dense")
 
 
 def _render_nav_status(state):
@@ -288,9 +288,12 @@ def _show_source_dialog(state):
     dialog.open()
 
 
-def toggle_theme(state):
+def toggle_theme(state, dark_element):
+    """Toggle dark mode and refresh page"""
     state["dark_mode"] = not state.get("dark_mode", True)
-    ui.notify("主题切换需刷新页面生效", type="info", position="bottom-right")
+    dark_element.value = state["dark_mode"]
+    ui.notify("主题已切换", type="info", position="bottom-right", timeout=500)
+    ui.timer(0.3, lambda: ui.run_javascript("location.reload()"), once=True)
 
 
 # ─── Drawer helpers ──────────────────────────────────────────
@@ -513,7 +516,8 @@ async def confirm_action(message: str, on_confirm, title: str = "确认操作"):
 @ui.page("/")
 def main_page():
     state = init_state()
-    build_nav()
+    dark = ui.dark_mode(value=state.get("dark_mode", True))
+    build_nav(dark_element=dark)
     page_id = state.get("page", "dashboard")
 
     # Apply group order from URL parameter (drag-and-drop)
