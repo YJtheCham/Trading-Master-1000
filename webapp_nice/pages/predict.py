@@ -22,18 +22,41 @@ def _predict_new(state):
     for k in state.get("watchlist", []):
         inf = info_for(k, state.get("stock_names", {}))
         d = f"{inf['symbol']} {inf['name']}"; stock_items.append(d); key_map[d] = k
-    with ui.row().classes("items-end gap-2 q-mb-sm"):
-        stock_sel = ui.select(options=stock_items, label="股票", value=stock_items[0] if stock_items else None).props("dense outlined").classes("w-56")
-        model_sel = ui.select(options=list_models(), label="模型", value=["arima","gbdt","xgboost"], multiple=True).props("use-chips dense outlined").classes("w-40")
-        steps_sl = ui.slider(min=5, max=90, value=30, step=5)
-        ui.label().bind_text_from(steps_sl, "value", backward=lambda v: f"{v}天").classes("text-caption")
+
+    mode = ui.radio(["单股预测", "批量预测"], value="单股预测").props("inline")
     col = ui.column()
     progress = ui.spinner(size="lg").classes("q-ml-md"); progress.visible = False
     progress_label = ui.label("").classes("text-caption text-grey q-ml-md")
     progress_label.visible = False
 
-    async def run():
+    def render_mode():
         col.clear()
+        if mode.value == "单股预测":
+            with col:
+                with ui.row().classes("items-end gap-2 q-mb-sm"):
+                    stock_sel = ui.select(options=stock_items, label="股票", value=stock_items[0] if stock_items else None).props("dense outlined").classes("w-56")
+                    model_sel = ui.select(options=list_models(), label="模型", value=["arima","gbdt","xgboost"], multiple=True).props("use-chips dense outlined").classes("w-40")
+                    steps_sl = ui.slider(min=5, max=90, value=30, step=5)
+                    ui.label().bind_text_from(steps_sl, "value", backward=lambda v: f"{v}天").classes("text-caption")
+                ui.button("▶ 开始预测", icon="play_arrow", on_click=lambda: run_single(stock_sel, model_sel, steps_sl)).props("color=primary").classes("q-mt-sm")
+        else:
+            with col:
+                with ui.row().classes("items-end gap-2 q-mb-sm"):
+                    batch_sel = ui.select(options=stock_items, label="批量选股", multiple=True, value=[]).props("use-chips dense outlined").classes("w-80")
+                    ui.button("📋 全选", on_click=lambda: batch_sel.set_value(stock_items)).props("flat dense")
+                with ui.row().classes("items-end gap-2 q-mb-sm"):
+                    model_sel = ui.select(options=list_models(), label="模型", value=["arima","gbdt","xgboost"], multiple=True).props("use-chips dense outlined").classes("w-40")
+                    steps_sl = ui.slider(min=5, max=90, value=30, step=5)
+                    ui.label().bind_text_from(steps_sl, "value", backward=lambda v: f"{v}天").classes("text-caption")
+                ui.button("▶ 批量预测", icon="play_arrow", on_click=lambda: run_batch(batch_sel, model_sel, steps_sl)).props("color=primary").classes("q-mt-sm")
+
+    mode.on("update:model-value", render_mode)
+    render_mode()
+
+    result_col = ui.column().classes("w-full q-mt-md")
+
+    async def run_single(stock_sel, model_sel, steps_sl):
+        result_col.clear()
         tgt = key_map.get(stock_sel.value)
         if not tgt: ui.notify("请选股", type="warning"); return
         progress.visible = True
@@ -54,7 +77,7 @@ def _predict_new(state):
                                r.forecast_dates, float(r.history[-1]), float(mape_val),
                                data_source=r.data_source, model_params=r.model_params)
             valid = [(n, r) for n, r in res.items() if len(r.forecast) > 0]
-            with col:
+            with result_col:
                 rows = []
                 for n, r in res.items():
                     m = r.metrics
@@ -80,7 +103,60 @@ def _predict_new(state):
             progress.visible = False
             progress_label.visible = False
 
-    ui.button("▶ 开始预测", icon="play_arrow", on_click=run).props("color=primary").classes("q-mt-sm")
+    async def run_batch(batch_sel, model_sel, steps_sl):
+        result_col.clear()
+        targets = [key_map.get(s) for s in batch_sel.value if key_map.get(s)]
+        if not targets: ui.notify("请选择股票", type="warning"); return
+        if not model_sel.value: ui.notify("请选择模型", type="warning"); return
+
+        progress.visible = True
+        progress_label.visible = True
+        summary = []
+
+        for idx, tgt in enumerate(targets):
+            progress_label.text = f"预测中 {idx+1}/{len(targets)}..."
+            try:
+                inf = info_for(tgt, state.get("stock_names", {}))
+                df, src = get_data_notify(inf["symbol"], inf["market"], inf["name"], period_days=500)
+                res = run_models(df, model_names=model_sel.value, steps=steps_sl.value, data_source=src)
+                from src.data.pred_history import add_prediction
+                up_count = 0
+                last_price = 0
+                for n, r in res.items():
+                    if len(r.forecast) == 0: continue
+                    mape_val = r.metrics.get("MAPE", 0)
+                    if isinstance(mape_val, str): mape_val = 0
+                    add_prediction(inf["symbol"], inf["market"], inf["name"], n,
+                                   r.forecast.tolist() if hasattr(r.forecast, 'tolist') else r.forecast,
+                                   r.forecast_dates, float(r.history[-1]), float(mape_val),
+                                   data_source=r.data_source, model_params=r.model_params)
+                    if r.forecast[-1] > r.history[-1]:
+                        up_count += 1
+                    last_price = float(r.history[-1])
+
+                summary.append({
+                    "symbol": inf["symbol"],
+                    "name": inf["name"],
+                    "up_count": up_count,
+                    "total": len(res),
+                    "last_price": last_price
+                })
+            except Exception as e:
+                summary.append({"symbol": tgt.split("-",1)[1] if "-" in tgt else tgt, "name": "失败", "up_count": 0, "total": 0, "last_price": 0})
+
+        progress.visible = False
+        progress_label.visible = False
+
+        with result_col:
+            ui.label(f"📊 批量预测完成 — {len(targets)}只").classes("text-h6 q-mb-sm")
+            rows = [{"股票": f"{s['symbol']} {s['name']}", "看涨": s["up_count"], "总模型": s["total"], "末价": f"{s['last_price']:.2f}" if s['last_price'] else "-"} for s in summary]
+            ui.table(rows=rows, columns=[{"name": c, "label": c, "field": c} for c in rows[0].keys()])
+
+            try:
+                from src.data.batch_history import add_batch_prediction
+                add_batch_prediction(summary)
+            except Exception:
+                pass
 
 
 def _predict_hist(state):
